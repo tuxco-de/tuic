@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly REPOSITORY="Itsusinn/tuic"
+readonly REPOSITORY="tuxco-de/tuic"
 readonly SERVICE_NAME="tuic-server"
 readonly INSTALL_BIN="/usr/local/bin/tuic-server"
 readonly CONFIG_DIR="/etc/tuic"
