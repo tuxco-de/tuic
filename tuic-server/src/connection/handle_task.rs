@@ -35,7 +35,10 @@ impl Connection {
 				.outbound
 				.named
 				.get(name)
-				.unwrap_or(&self.ctx.cfg.outbound.default)
+				.unwrap_or_else(|| {
+					warn!("Outbound rule '{}' not found, falling back to default", name);
+					&self.ctx.cfg.outbound.default
+				})
 		}
 	}
 
@@ -45,7 +48,7 @@ impl Connection {
 		port: u16,
 		is_tcp: bool,
 		domain: Option<&str>,
-	) -> (String, Option<IpAddr>, bool) {
+	) -> (String, Option<IpAddr>, bool, Vec<SocketAddr>) {
 		// Returns (outbound_name, hijack_ip, drop)
 
 		use crate::acl::{AclAddress, AclPortSpec, AclProtocol};
@@ -105,17 +108,23 @@ impl Connection {
 		};
 
 		for rule in &self.ctx.cfg.acl {
+			let mut matched_addrs = Vec::new();
 			let matched = if let Some(dom) = domain {
 				match &rule.addr {
 					AclAddress::Domain(_) | AclAddress::WildcardDomain(_) => {
-						domain_matches(&rule.addr, dom) && ports_proto_ok(rule)
+						if domain_matches(&rule.addr, dom) && ports_proto_ok(rule) {
+							matched_addrs = addrs.to_vec();
+							true
+						} else {
+							false
+						}
 					}
 					_ => {
 						let mut found = false;
 						for sa in addrs {
 							if rule.matching(*sa, port, is_tcp).await {
+								matched_addrs.push(*sa);
 								found = true;
-								break;
 							}
 						}
 						found
@@ -125,8 +134,8 @@ impl Connection {
 				let mut found = false;
 				for sa in addrs {
 					if rule.matching(*sa, port, is_tcp).await {
+						matched_addrs.push(*sa);
 						found = true;
-						break;
 					}
 				}
 				found
@@ -135,20 +144,20 @@ impl Connection {
 			if matched {
 				let hijack = rule.hijack.as_ref().and_then(|h| h.parse::<IpAddr>().ok());
 				if rule.outbound.eq_ignore_ascii_case("drop") {
-					return ("drop".to_string(), hijack, true);
+					return ("drop".to_string(), hijack, true, vec![]);
 				}
-				return (rule.outbound.clone(), hijack, false);
+				return (rule.outbound.clone(), hijack, false, matched_addrs);
 			}
 		}
 		// Built-in safety: drop localhost if no explicit rule matched
 		if self.ctx.cfg.experimental.drop_loopback && addrs.iter().any(|sa| sa.ip().is_loopback()) {
-			return ("drop".to_string(), None, true);
+			return ("drop".to_string(), None, true, vec![]);
 		}
 		if self.ctx.cfg.experimental.drop_private && addrs.iter().any(|sa| is_private_ip(&sa.ip())) {
-			return ("drop".to_string(), None, true);
+			return ("drop".to_string(), None, true, vec![]);
 		}
 
-		("default".to_string(), None, false)
+		("default".to_string(), None, false, addrs.to_vec())
 	}
 
 	fn get_bind_ip(&self, is_ipv6: bool, outbound: &OutboundRule) -> Option<IpAddr> {
@@ -167,7 +176,9 @@ impl Connection {
 			TcpSocket::new_v6()?
 		};
 		#[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-		socket.bind_device(outbound.bind_device.as_ref().map(|s| s.as_bytes()))?;
+		if let Some(device) = outbound.bind_device.as_deref() {
+			socket.bind_device(Some(device.as_bytes()))?;
+		}
 		if let Some(bind_ip) = self.get_bind_ip(target_addr.is_ipv6(), outbound) {
 			socket.bind(SocketAddr::new(bind_ip, 0))?;
 		}
@@ -199,7 +210,7 @@ impl Connection {
 				Address::DomainAddress(d, _) => Some(d.as_str()),
 				_ => None,
 			};
-			let (outbound_name, hijack, drop) = self.decide_acl_for_addrs(&acl_addrs, port, true, domain).await;
+			let (outbound_name, hijack, drop, matched_addrs) = self.decide_acl_for_addrs(&acl_addrs, port, true, domain).await;
 
 			if drop {
 				warn!("[TCP] {target_addr} blocked by ACL");
@@ -214,7 +225,7 @@ impl Connection {
 			let mut addrs = if let Some(hijack_ip) = hijack {
 				vec![SocketAddr::new(hijack_ip, port)]
 			} else {
-				initial_addrs
+				matched_addrs
 			};
 			self.filter_addresses(&mut addrs, outbound)?;
 
@@ -333,7 +344,7 @@ impl Connection {
 				Address::DomainAddress(d, _) => Some(d.as_str()),
 				_ => None,
 			};
-			let (outbound_name, hijack, should_drop) =
+			let (outbound_name, hijack, should_drop, _) =
 				self.decide_acl_for_addrs(&initial_addrs, addr.port(), false, domain).await;
 			if should_drop {
 				// Silently drop the packet as per ACL

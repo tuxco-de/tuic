@@ -865,6 +865,22 @@ pub async fn parse_config(cli: Cli, env_state: EnvState) -> eyre::Result<Config>
 		}
 	}
 
+	// Validate that all ACL rules reference valid outbounds
+	for (i, rule) in config.acl.iter().enumerate() {
+		let outbound = &rule.outbound;
+		if !outbound.eq_ignore_ascii_case("direct")
+			&& !outbound.eq_ignore_ascii_case("default")
+			&& !outbound.eq_ignore_ascii_case("drop")
+			&& !config.outbound.named.contains_key(outbound)
+		{
+			return Err(eyre::eyre!(
+				"ACL rule #{} references an unknown outbound: '{}'. Valid outbounds are 'direct', 'default', 'drop', and named outbounds.",
+				i + 1,
+				outbound
+			));
+		}
+	}
+
 	Ok(config)
 }
 

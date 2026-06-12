@@ -354,8 +354,13 @@ impl Connection<side::Server> {
 			Header::Packet(pkt) => {
 				let model = self.model.recv_packet_unrestricted(pkt);
 				let pos = dg.position() as usize;
-				let buf = dg.into_inner().slice(pos..pos + model.size() as usize);
-				Ok(Task::Packet(Packet::new(model, PacketSource::Native(buf))))
+				let mut buf = dg.into_inner();
+				if (pos + model.size() as usize) <= buf.len() {
+					buf = buf.slice(pos..pos + model.size() as usize);
+					Ok(Task::Packet(Packet::new(model, PacketSource::Native(buf))))
+				} else {
+					Err(Error::PayloadLength(model.size() as usize, buf.len() - pos))
+				}
 			}
 			Header::Dissociate(_) => Err(Error::BadCommandDatagram("dissociate", dg.into_inner())),
 			Header::Heartbeat(hb) => {

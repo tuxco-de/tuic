@@ -49,16 +49,16 @@ impl Connection {
 		debug!("incoming bidirectional stream");
 
 		let pre_process = async {
-			let task = time::timeout(self.ctx.cfg.task_negotiation_timeout, self.model.accept_bi_stream(send, recv))
-				.await
-				.map_err(|_| Error::TaskNegotiationTimeout)??;
-
 			if !self.auth.is_authenticated() {
 				tokio::select! {
 					() = self.auth.wait() => {}
 					err = self.inner.closed() => return Err(Error::from(err)),
 				};
 			}
+
+			let task = time::timeout(self.ctx.cfg.task_negotiation_timeout, self.model.accept_bi_stream(send, recv))
+				.await
+				.map_err(|_| Error::TaskNegotiationTimeout)??;
 
 			Ok(task)
 		};
@@ -77,14 +77,14 @@ impl Connection {
 		debug!("incoming datagram");
 
 		let pre_process = async {
-			let task = self.model.accept_datagram(dg)?;
-
 			if !self.auth.is_authenticated() {
 				tokio::select! {
 					() = self.auth.wait() => {}
 					err = self.inner.closed() => return Err(Error::from(err)),
 				};
 			}
+
+			let task = self.model.accept_datagram(dg)?;
 
 			if matches!(task, Task::Packet(_)) && matches!(**self.udp_relay_mode.load(), Some(UdpRelayMode::Quic)) {
 				return Err(Error::UnexpectedPacketSource);
