@@ -393,7 +393,7 @@ sudo bash scripts/deploy-server.sh \
 也可以直接从仓库执行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Itsusinn/tuic/main/scripts/deploy-server.sh | \
+curl -fsSL https://raw.githubusercontent.com/tuxco-de/tuic/main/scripts/deploy-server.sh | \
   sudo bash -s -- --domain tuic.example.com
 ```
 
