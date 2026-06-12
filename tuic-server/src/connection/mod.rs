@@ -64,6 +64,7 @@ pub struct Connection {
 	udp_sessions: Cache<u16, Arc<UdpSession>>,
 	udp_session_create_lock: Arc<AsyncMutex<()>>,
 	udp_relay_mode: Arc<ArcSwap<Option<UdpRelayMode>>>,
+	pub datagram_sem: Arc<tokio::sync::Semaphore>,
 }
 
 impl Connection {
@@ -123,7 +124,18 @@ impl Connection {
 										tokio::spawn(conn.clone().handle_bi_stream((send, recv)).instrument(span));
 									}
 									PrefetchedFirstEventTuic::Datagram(dg) => {
-										tokio::spawn(conn.clone().handle_datagram(dg).instrument(span));
+										if let Ok(permit) = conn.datagram_sem.clone().try_acquire_owned() {
+											let conn_clone = conn.clone();
+											tokio::spawn(
+												async move {
+													let _permit = permit;
+													conn_clone.handle_datagram(dg).await;
+												}
+												.instrument(span),
+											);
+										} else {
+											tracing::warn!("Datagram dropped due to backpressure");
+										}
 									}
 								}
 							}
@@ -169,6 +181,7 @@ impl Connection {
 			udp_sessions: Cache::new(max_udp_sessions),
 			udp_session_create_lock: Arc::new(AsyncMutex::new(())),
 			udp_relay_mode: Arc::new(ArcSwap::new(None.into())),
+			datagram_sem: Arc::new(tokio::sync::Semaphore::new(1024)),
 		}
 	}
 
@@ -324,12 +337,24 @@ impl Connection {
 
 			let handle_incoming = async {
 				tokio::select! {
-					res = self.inner.accept_uni() =>
-						tokio::spawn(self.clone().handle_uni_stream(res?, ).instrument(span.clone())),
-					res = self.inner.accept_bi() =>
-						tokio::spawn(self.clone().handle_bi_stream(res?, ).instrument(span.clone())),
-					res = self.inner.read_datagram() =>
-						tokio::spawn(self.clone().handle_datagram(res?).instrument(span.clone())),
+					res = self.inner.accept_uni() => {
+						tokio::spawn(self.clone().handle_uni_stream(res?, ).instrument(span.clone()));
+					}
+					res = self.inner.accept_bi() => {
+						tokio::spawn(self.clone().handle_bi_stream(res?, ).instrument(span.clone()));
+					}
+					res = self.inner.read_datagram() => {
+						let dg = res?;
+						if let Ok(permit) = self.datagram_sem.clone().try_acquire_owned() {
+							let self_clone = self.clone();
+							tokio::spawn(async move {
+								let _permit = permit;
+								self_clone.handle_datagram(dg).await;
+							}.instrument(span.clone()));
+						} else {
+							tracing::warn!("Datagram dropped due to backpressure");
+						}
+					}
 				};
 
 				Ok::<_, Error>(())

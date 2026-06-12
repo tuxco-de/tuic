@@ -2,7 +2,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 const BUFFER_SIZE: usize = 16 * 1024;
 
-pub async fn copy_io<A, B>(a: &mut A, b: &mut B) -> (usize, usize, Option<std::io::Error>)
+pub async fn copy_io<A, B>(a: &mut A, b: &mut B, idle_timeout: std::time::Duration) -> (usize, usize, Option<std::io::Error>)
 where
 	A: AsyncRead + AsyncWrite + Unpin + ?Sized,
 	B: AsyncRead + AsyncWrite + Unpin + ?Sized,
@@ -20,6 +20,10 @@ where
 
 	loop {
 		tokio::select! {
+		   _ = tokio::time::sleep(idle_timeout) => {
+			   last_err = Some(std::io::Error::new(std::io::ErrorKind::TimedOut, "stream idle timeout"));
+			   break;
+		   }
 		   a2b_res = a.read_buf(&mut a2b), if !a_eof => match a2b_res {
 			  Ok(num) => {
 				 if num == 0 {
@@ -106,7 +110,7 @@ mod tests {
 			buf
 		});
 
-		let (a2b, b2a, err) = copy_io(&mut server_side, &mut remote).await;
+		let (a2b, b2a, err) = copy_io(&mut server_side, &mut remote, std::time::Duration::from_secs(60)).await;
 
 		assert_eq!(a2b, data_to_remote.len());
 		assert_eq!(b2a, data_to_client.len());
@@ -131,7 +135,7 @@ mod tests {
 			remote_side.shutdown().await.unwrap();
 		});
 
-		let (a2b, b2a, _err) = copy_io(&mut server_side, &mut remote).await;
+		let (a2b, b2a, _err) = copy_io(&mut server_side, &mut remote, std::time::Duration::from_secs(60)).await;
 
 		assert_eq!(a2b, 0);
 		assert_eq!(b2a, 0);
@@ -159,7 +163,7 @@ mod tests {
 			let _ = remote_side.read_to_end(&mut buf).await;
 		});
 
-		let (a2b, b2a, _err) = copy_io(&mut server_side, &mut remote).await;
+		let (a2b, b2a, _err) = copy_io(&mut server_side, &mut remote, std::time::Duration::from_secs(60)).await;
 
 		assert_eq!(a2b, data.len());
 		assert_eq!(b2a, 0);
@@ -187,7 +191,7 @@ mod tests {
 			let _ = remote_side.read_to_end(&mut buf).await;
 		});
 
-		let (a2b, b2a, _err) = copy_io(&mut server_side, &mut remote).await;
+		let (a2b, b2a, _err) = copy_io(&mut server_side, &mut remote, std::time::Duration::from_secs(60)).await;
 
 		assert_eq!(a2b, 100_000);
 		assert_eq!(b2a, 0);

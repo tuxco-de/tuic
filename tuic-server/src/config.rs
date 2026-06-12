@@ -97,6 +97,9 @@ pub struct Config {
 	#[educe(Default = None)]
 	pub restful: Option<RestfulConfig>,
 
+	#[serde(default)]
+	pub admission: AdmissionConfig,
+
 	pub quic: QuicConfig,
 
 	#[educe(Default = true)]
@@ -351,6 +354,12 @@ pub struct RestfulConfig {
 	pub addr: SocketAddr,
 	#[educe(Default = "YOUR_SECRET_HERE")]
 	pub secret: String,
+}
+
+#[derive(Deserialize, Serialize, Educe, Clone)]
+#[educe(Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct AdmissionConfig {
 	#[educe(Default = 0)]
 	pub maximum_clients_per_user: usize,
 }
@@ -874,9 +883,18 @@ pub async fn parse_config(cli: Cli, env_state: EnvState) -> eyre::Result<Config>
 			&& !config.outbound.named.contains_key(outbound)
 		{
 			return Err(eyre::eyre!(
-				"ACL rule #{} references an unknown outbound: '{}'. Valid outbounds are 'direct', 'default', 'drop', and named outbounds.",
+				"ACL rule #{} references an unknown outbound: '{}'. Valid outbounds are 'direct', 'default', 'drop', and \
+				 named outbounds.",
 				i + 1,
 				outbound
+			));
+		}
+	}
+
+	if let Some(restful) = &config.restful {
+		if restful.secret.is_empty() || restful.secret == "YOUR_SECRET_HERE" {
+			return Err(eyre::eyre!(
+				"REST API is enabled but secret is not configured. Set a strong secret in restful.secret"
 			));
 		}
 	}
@@ -950,7 +968,7 @@ mod tests {
 		let restful = result.restful.unwrap();
 		assert_eq!(restful.addr, "192.168.1.100:8081".parse().unwrap());
 		assert_eq!(restful.secret, "test_secret");
-		assert_eq!(restful.maximum_clients_per_user, 5);
+		assert_eq!(result.admission.maximum_clients_per_user, 5);
 
 		let uuid1 = Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap();
 		let uuid2 = Uuid::parse_str("123e4567-e89b-12d3-a456-426614174001").unwrap();
@@ -1465,7 +1483,7 @@ reverse_proxy_url = "https://127.0.0.1:443"
 		let restful = result.restful.unwrap();
 		assert_eq!(restful.addr, "127.0.0.1:8888".parse().unwrap());
 		assert_eq!(restful.secret, "json5_secret");
-		assert_eq!(restful.maximum_clients_per_user, 10);
+		assert_eq!(result.admission.maximum_clients_per_user, 10);
 	}
 
 	#[tokio::test]

@@ -63,8 +63,11 @@ pub async fn start_acme(
 
 	let axum_cancel: ArcSwapOption<CancellationToken> = None.into();
 
+	let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+
 	// Drive the ACME state machine in background
 	tokio::spawn(async move {
+		let mut tx = Some(tx);
 		loop {
 			match state.next().await {
 				Some(Ok(event)) => match event {
@@ -83,14 +86,30 @@ pub async fn start_acme(
 					rustls_acme::EventOk::DeployedNewCert => {
 						info!("ACME event: DeployedNewCert");
 						axum_cancel.swap(None).inspect(|v| v.cancel());
+						if let Some(tx) = tx.take() {
+							let _ = tx.send(());
+						}
+					}
+					rustls_acme::EventOk::DeployedCachedCert => {
+						info!("ACME event: DeployedCachedCert");
+						if let Some(tx) = tx.take() {
+							let _ = tx.send(());
+						}
 					}
 					_ => info!("ACME event: {:?}", event),
 				},
-				Some(Err(e)) => error!("ACME error: {:?}", e),
+				Some(Err(e)) => {
+					error!("ACME error: {:?}", e);
+					if let Some(tx) = tx.take() {
+						let _ = tx.send(());
+					}
+				}
 				None => break,
 			}
 		}
 	});
+
+	let _ = tokio::time::timeout(std::time::Duration::from_secs(30), rx).await;
 
 	Ok(resolver)
 }

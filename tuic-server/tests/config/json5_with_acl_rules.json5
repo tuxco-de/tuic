@@ -7,4 +7,8 @@
     tls: {
         self_sign: true,
     },
+    outbound: {
+        allow: { type: "direct" },
+        reject: { type: "direct" },
+    }
 }

@@ -37,6 +37,7 @@ pub struct AppContext {
 pub struct ServerGuard {
 	pub local_addr: std::net::SocketAddr,
 	pub cancel: CancellationToken,
+	pub handle: tokio::task::JoinHandle<()>,
 }
 
 /// Run the TUIC server with the given configuration.
@@ -63,9 +64,13 @@ pub async fn run(cfg: Config) -> eyre::Result<ServerGuard> {
 	let server = server::Server::init(ctx.clone()).await?;
 	let local_addr = server.local_addr()?;
 	let cancel = ctx.cancel.clone();
-	tokio::spawn(async move {
+	let handle = tokio::spawn(async move {
 		server.start().await;
 	});
-	Ok(ServerGuard { local_addr, cancel })
+	Ok(ServerGuard {
+		local_addr,
+		cancel,
+		handle,
+	})
 }
 pub mod h3_quinn_compat;

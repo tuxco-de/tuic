@@ -168,18 +168,24 @@ impl Server {
 		}
 
 		loop {
-			match self.ep.accept().await {
-				Some(conn) => match conn.accept() {
-					Ok(conn) => {
-						tokio::spawn(Connection::handle(self.ctx.clone(), conn));
-					}
-					Err(e) => {
-						debug!("[Incoming] Failed to accept connection: {e}");
-					}
-				},
-				None => {
-					debug!("[Incoming] the endpoint is closed");
+			tokio::select! {
+				_ = self.ctx.cancel.cancelled() => {
+					tracing::info!("Server cancellation requested");
 					return;
+				}
+				accept_res = self.ep.accept() => match accept_res {
+					Some(conn) => match conn.accept() {
+						Ok(conn) => {
+							tokio::spawn(Connection::handle(self.ctx.clone(), conn));
+						}
+						Err(e) => {
+							debug!("[Incoming] Failed to accept connection: {e}");
+						}
+					},
+					None => {
+						debug!("[Incoming] the endpoint is closed");
+						return;
+					}
 				}
 			}
 		}

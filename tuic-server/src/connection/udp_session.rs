@@ -15,7 +15,7 @@ use tracing::{Instrument, Span, warn};
 use tuic_core::Address;
 
 use super::Connection;
-use crate::{AppContext, error::Error, utils::FutResultExt};
+use crate::{AppContext, error::Error};
 
 pub struct UdpSession {
 	ctx: Arc<AppContext>,
@@ -120,13 +120,21 @@ impl UdpSession {
 					}
 				};
 
-				tokio::spawn(
-					conn_listening
-						.clone()
-						.relay_packet(pkt, Address::SocketAddress(addr), session_listening.assoc_id)
-						.log_err()
+				if let Ok(permit) = conn_listening.datagram_sem.clone().try_acquire_owned() {
+					let conn_clone = conn_listening.clone();
+					let session_clone = session_listening.clone();
+					tokio::spawn(
+						async move {
+							let _permit = permit;
+							let _ = conn_clone
+								.relay_packet(pkt, Address::SocketAddress(addr), session_clone.assoc_id)
+								.await;
+						}
 						.instrument(span.clone()),
-				);
+					);
+				} else {
+					warn!("UDP packet dropped due to backpressure");
+				}
 			}
 			session_listening.udp_sessions.invalidate(&assoc_id).await;
 		};

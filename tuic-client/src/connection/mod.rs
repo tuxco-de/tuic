@@ -57,6 +57,7 @@ pub struct Connection {
 	udp_relay_mode: UdpRelayMode,
 	pub(crate) socks5_udp_sessions: Socks5Sessions,
 	pub(crate) fwd_udp_sessions: FwdSessions,
+	datagram_sem: Arc<tokio::sync::Semaphore>,
 }
 
 impl ConnectionManager {
@@ -289,6 +290,7 @@ impl Connection {
 
 			socks5_udp_sessions,
 			fwd_udp_sessions,
+			datagram_sem: Arc::new(tokio::sync::Semaphore::new(1024)),
 		};
 
 		tokio::spawn(conn.clone().init(zero_rtt_accepted, heartbeat, gc_interval, gc_lifetime));
@@ -314,15 +316,25 @@ impl Connection {
 		let err = loop {
 			tokio::select! {
 				res = self.accept_uni_stream() => match res {
-					Ok(recv) => tokio::spawn(self.clone().handle_uni_stream(recv)),
+					Ok(recv) => { tokio::spawn(self.clone().handle_uni_stream(recv)); },
 					Err(err) => break err,
 				},
 				res = self.accept_bi_stream() => match res {
-					Ok((send, recv)) => tokio::spawn(self.clone().handle_bi_stream(send, recv)),
+					Ok((send, recv)) => { tokio::spawn(self.clone().handle_bi_stream(send, recv)); },
 					Err(err) => break err,
 				},
 				res = self.accept_datagram() => match res {
-					Ok(dg) => tokio::spawn(self.clone().handle_datagram(dg)),
+					Ok(dg) => {
+						if let Ok(permit) = self.datagram_sem.clone().try_acquire_owned() {
+							let self_clone = self.clone();
+							tokio::spawn(async move {
+								let _permit = permit;
+								self_clone.handle_datagram(dg).await;
+							});
+						} else {
+							tracing::warn!("Datagram dropped due to backpressure");
+						}
+					},
 					Err(err) => break err,
 				},
 			};

@@ -9,3 +9,8 @@ allow google.com
 
 [tls]
 self_sign = true
+
+[outbound.allow]
+type = "direct"
+[outbound.reject]
+type = "direct"

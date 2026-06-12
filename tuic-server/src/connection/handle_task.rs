@@ -30,15 +30,10 @@ impl Connection {
 		if name.eq_ignore_ascii_case("default") || name.eq_ignore_ascii_case("direct") {
 			&self.ctx.cfg.outbound.default
 		} else {
-			self.ctx
-				.cfg
-				.outbound
-				.named
-				.get(name)
-				.unwrap_or_else(|| {
-					warn!("Outbound rule '{}' not found, falling back to default", name);
-					&self.ctx.cfg.outbound.default
-				})
+			self.ctx.cfg.outbound.named.get(name).unwrap_or_else(|| {
+				warn!("Outbound rule '{}' not found, falling back to default", name);
+				&self.ctx.cfg.outbound.default
+			})
 		}
 	}
 
@@ -239,7 +234,7 @@ impl Connection {
 
 			// a -> b tx
 			// a <- b rx
-			let (tx, rx, err) = copy_io(&mut conn, &mut stream).await;
+			let (tx, rx, err) = copy_io(&mut conn, &mut stream, self.ctx.cfg.stream_timeout).await;
 			if err.is_some() {
 				_ = conn.reset(ERROR_CODE);
 			} else {
@@ -290,9 +285,10 @@ impl Connection {
 
 		for addr in addrs {
 			match self.create_socket(&addr, outbound) {
-				Ok(socket) => match socket.connect(addr).await {
-					Ok(stream) => return Ok(stream),
-					Err(err) => last_error = Some(err),
+				Ok(socket) => match tokio::time::timeout(std::time::Duration::from_secs(10), socket.connect(addr)).await {
+					Ok(Ok(stream)) => return Ok(stream),
+					Ok(Err(err)) => last_error = Some(err),
+					Err(_) => last_error = Some(std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout")),
 				},
 				Err(err) => last_error = Some(err),
 			}

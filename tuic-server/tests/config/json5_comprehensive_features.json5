@@ -33,6 +33,8 @@
     restful: {
         addr: "127.0.0.1:8888",
         secret: "json5_secret",
-        maximum_clients_per_user: 10,
     }, // trailing comma
+    admission: {
+        maximum_clients_per_user: 10,
+    },
 }

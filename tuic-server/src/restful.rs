@@ -156,20 +156,21 @@ async fn reset_traffic(
 }
 
 pub async fn client_connect(ctx: &AppContext, uuid: &Uuid, conn: QuinnConnection) -> bool {
-	if let Some(cfg) = ctx.cfg.restful.as_ref() {
-		let Some(counter) = ctx.online_counter.get(uuid) else {
-			warn!("UUID {uuid} not in users table during client_connect, closing connection");
-			conn.close(VarInt::from_u32(6003), b"Internal error");
-			return false;
-		};
-		if !try_reserve_client(counter, cfg.maximum_clients_per_user) {
-			conn.close(VarInt::from_u32(6001), b"Reached maximum clients limitation");
-			return false;
-		}
-		let cap = if cfg.maximum_clients_per_user == 0 {
+	let Some(counter) = ctx.online_counter.get(uuid) else {
+		warn!("UUID {uuid} not in users table during client_connect, closing connection");
+		conn.close(VarInt::from_u32(6003), b"Internal error");
+		return false;
+	};
+	if !try_reserve_client(counter, ctx.cfg.admission.maximum_clients_per_user) {
+		conn.close(VarInt::from_u32(6001), b"Reached maximum clients limitation");
+		return false;
+	}
+
+	if ctx.cfg.restful.is_some() {
+		let cap = if ctx.cfg.admission.maximum_clients_per_user == 0 {
 			10000
 		} else {
-			cfg.maximum_clients_per_user as u64
+			ctx.cfg.admission.maximum_clients_per_user as u64
 		};
 		let cache = ctx.online_clients.get_with(*uuid, async { Arc::new(Cache::new(cap)) }).await;
 

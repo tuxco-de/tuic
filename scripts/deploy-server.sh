@@ -353,24 +353,34 @@ detect_asset() {
 }
 
 download_binary() {
-	local asset url temporary
+	local asset url checksum_url temporary
 	asset="$(detect_asset)"
 	if [[ "$VERSION" == "latest" ]]; then
 		url="https://github.com/${REPOSITORY}/releases/latest/download/${asset}"
+		checksum_url="https://github.com/${REPOSITORY}/releases/latest/download/sha256sum.txt"
 	else
 		[[ "$VERSION" == v* ]] || VERSION="v${VERSION}"
 		url="https://github.com/${REPOSITORY}/releases/download/${VERSION}/${asset}"
+		checksum_url="https://github.com/${REPOSITORY}/releases/download/${VERSION}/sha256sum.txt"
 	fi
 
-	temporary="$(mktemp)"
-	trap "rm -f '$temporary'" EXIT
+	temporary="$(mktemp -d)"
+	trap "rm -rf '$temporary'" EXIT
 	log "downloading ${asset} (${VERSION})"
-	curl --fail --location --retry 3 --connect-timeout 15 --output "$temporary" "$url"
-	chmod 0755 "$temporary"
-	"$temporary" --version >/dev/null
-	install -m 0755 "$temporary" "$INSTALL_BIN"
+	curl --fail --location --retry 3 --connect-timeout 15 --output "$temporary/${asset}" "$url"
+
+	log "verifying checksum..."
+	if curl --silent --fail --location --retry 3 --connect-timeout 15 --output "$temporary/sha256sum.txt" "$checksum_url"; then
+		(cd "$temporary" && grep "${asset}$" sha256sum.txt | sha256sum -c -) || fail "checksum verification failed"
+	else
+		log "warning: sha256sum.txt not found, skipping checksum verification"
+	fi
+
+	chmod 0755 "$temporary/${asset}"
+	"$temporary/${asset}" --version >/dev/null
+	install -m 0755 "$temporary/${asset}" "$INSTALL_BIN"
 	trap - EXIT
-	rm -f "$temporary"
+	rm -rf "$temporary"
 }
 
 create_service_user() {

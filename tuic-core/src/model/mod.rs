@@ -105,7 +105,7 @@ where
 	}
 
 	/// Receives a `Packet` without checking the association ID
-	pub fn recv_packet_unrestricted(&self, header: PacketHeader) -> Packet<side::Rx, B> {
+	pub fn recv_packet_unrestricted(&self, header: PacketHeader) -> Option<Packet<side::Rx, B>> {
 		let (assoc_id, pkt_id, frag_total, frag_id, size, addr) = header.into();
 		self.udp_sessions.lock().recv_packet_unrestricted(
 			self.udp_sessions.clone(),
@@ -232,11 +232,17 @@ where
 		frag_id: u8,
 		size: u16,
 		addr: Address,
-	) -> Packet<side::Rx, B> {
-		self.sessions
-			.entry(assoc_id)
-			.or_insert_with(|| UdpSession::new(self.task_associate_count.reg()))
-			.recv_packet(sessions, assoc_id, pkt_id, frag_total, frag_id, size, addr)
+	) -> Option<Packet<side::Rx, B>> {
+		if !self.sessions.contains_key(&assoc_id) && self.sessions.len() >= 8192 {
+			return None;
+		}
+
+		Some(
+			self.sessions
+				.entry(assoc_id)
+				.or_insert_with(|| UdpSession::new(self.task_associate_count.reg()))
+				.recv_packet(sessions, assoc_id, pkt_id, frag_total, frag_id, size, addr),
+		)
 	}
 
 	fn send_dissociate(&mut self, assoc_id: u16) -> Dissociate<side::Tx> {

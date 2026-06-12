@@ -21,13 +21,18 @@ use crate::{
 };
 
 // Global UDP forward session registry
-pub async fn start(ctx: Arc<crate::AppContext>, tcp: Vec<TcpForward>, udp: Vec<UdpForward>) {
+pub async fn start(ctx: Arc<crate::AppContext>, tcp: Vec<TcpForward>, udp: Vec<UdpForward>) -> Result<(), Error> {
 	for entry in tcp {
-		tokio::spawn(run_tcp_forwarder(entry, ctx.clone()));
+		let listener = create_tcp_listener(entry.listen)?;
+		tokio::spawn(run_tcp_forwarder(listener, entry, ctx.clone()));
 	}
 	for entry in udp {
-		tokio::spawn(run_udp_forwarder(entry, ctx.clone()));
+		let socket = UdpSocket::bind(entry.listen)
+			.await
+			.map_err(|err| Error::Socket("failed to bind udp forward socket", err))?;
+		tokio::spawn(run_udp_forwarder(socket, entry, ctx.clone()));
 	}
+	Ok(())
 }
 
 #[derive(Clone)]
@@ -72,46 +77,41 @@ impl ForwardUdpSession {
 	}
 }
 
-async fn run_tcp_forwarder(entry: TcpForward, ctx: Arc<crate::AppContext>) {
-	match create_tcp_listener(entry.listen) {
-		Ok(listener) => {
-			warn!(
-				"[forward-tcp] listening on {listen} -> {remote:?}",
-				listen = listener.local_addr().unwrap(),
-				remote = entry.remote
-			);
-			loop {
-				match listener.accept().await {
-					Ok((mut inbound, peer)) => {
-						let remote = entry.remote.clone();
-						let ctx = ctx.clone();
-						tokio::spawn(async move {
-							info!("[forward-tcp] [{peer}] connected", peer = peer);
-							let fut = async {
-								let conn = ctx.get_conn().await?;
-								let remote_addr = TuicAddress::DomainAddress(remote.0, remote.1);
-								let mut relay = conn.connect(remote_addr).await?;
-								match io::copy_bidirectional(&mut inbound, &mut relay).await {
-									Ok((_lr, _rl)) => {
-										let _ = relay.shutdown().await;
-									}
-									Err(err) => {
-										warn!("[forward-tcp] [{peer}] relay error: {err}");
-									}
-								}
-								Ok::<(), Error>(())
-							};
-							if let Err(err) = fut.await {
-								warn!("[forward-tcp] [{peer}] error: {err}");
+async fn run_tcp_forwarder(listener: TcpListener, entry: TcpForward, ctx: Arc<crate::AppContext>) {
+	warn!(
+		"[forward-tcp] listening on {listen} -> {remote:?}",
+		listen = listener.local_addr().unwrap(),
+		remote = entry.remote
+	);
+	loop {
+		match listener.accept().await {
+			Ok((mut inbound, peer)) => {
+				let remote = entry.remote.clone();
+				let ctx = ctx.clone();
+				tokio::spawn(async move {
+					info!("[forward-tcp] [{peer}] connected", peer = peer);
+					let fut = async {
+						let conn = ctx.get_conn().await?;
+						let remote_addr = TuicAddress::DomainAddress(remote.0, remote.1);
+						let mut relay = conn.connect(remote_addr).await?;
+						match io::copy_bidirectional(&mut inbound, &mut relay).await {
+							Ok((_lr, _rl)) => {
+								let _ = relay.shutdown().await;
 							}
-							debug!("[forward-tcp] [{peer}] closed");
-						});
+							Err(err) => {
+								warn!("[forward-tcp] [{peer}] relay error: {err}");
+							}
+						}
+						Ok::<(), Error>(())
+					};
+					if let Err(err) = fut.await {
+						warn!("[forward-tcp] [{peer}] error: {err}");
 					}
-					Err(err) => warn!("[forward-tcp] accept error: {err}"),
-				}
+					debug!("[forward-tcp] [{peer}] closed");
+				});
 			}
+			Err(err) => warn!("[forward-tcp] accept error: {err}"),
 		}
-		Err(err) => warn!("[forward-tcp] failed to bind listener: {err}"),
 	}
 }
 
@@ -137,17 +137,7 @@ fn create_tcp_listener(addr: SocketAddr) -> Result<TcpListener, Error> {
 	TcpListener::from_std(StdTcpListener::from(socket)).map_err(|err| Error::Socket("failed to create tcp forward socket", err))
 }
 
-async fn run_udp_forwarder(entry: UdpForward, ctx: Arc<crate::AppContext>) {
-	let socket = match UdpSocket::bind(entry.listen).await {
-		Ok(s) => s,
-		Err(err) => {
-			error!(
-				"[forward-udp] failed to bind {addr}: {err}; forwarder will not start",
-				addr = entry.listen
-			);
-			return;
-		}
-	};
+async fn run_udp_forwarder(socket: UdpSocket, entry: UdpForward, ctx: Arc<crate::AppContext>) {
 	let socket = Arc::new(socket);
 	warn!(
 		"[forward-udp] listening on {listen} -> {remote:?} timeout={timeout:?}",

@@ -22,6 +22,9 @@ env:
   RUSTC_BOOTSTRAP: "1"
   SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build

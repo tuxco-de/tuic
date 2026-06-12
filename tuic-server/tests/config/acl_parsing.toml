@@ -23,3 +23,10 @@ default 8.8.4.4 udp/53 1.1.1.1
 
 [tls]
 self_sign = true
+
+[outbound.allow]
+type = "direct"
+[outbound.reject]
+type = "direct"
+[outbound.custom_outbound_name]
+type = "direct"

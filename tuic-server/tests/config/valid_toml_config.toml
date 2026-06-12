@@ -29,6 +29,8 @@ initial_window = 2000000
 [restful]
 addr = "192.168.1.100:8081"
 secret = "test_secret"
+
+[admission]
 maximum_clients_per_user = 5
 
 [users]

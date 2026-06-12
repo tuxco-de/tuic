@@ -56,6 +56,7 @@ fn main() -> eyre::Result<()> {
 		let guard = tuic_server::run(cfg).await?;
 		tokio::signal::ctrl_c().await?;
 		guard.cancel.cancel();
+		let _ = tokio::time::timeout(std::time::Duration::from_secs(10), guard.handle).await;
 		tracing::info!("Received Ctrl-C, shutting down.");
 		Ok(())
 	})

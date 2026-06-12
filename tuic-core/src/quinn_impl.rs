@@ -303,8 +303,11 @@ impl Connection<side::Server> {
 			}
 			Header::Connect(_) => Err(Error::BadCommandUniStream("connect")),
 			Header::Packet(pkt) => {
-				let model = self.model.recv_packet_unrestricted(pkt);
-				Ok(Task::Packet(Packet::new(model, PacketSource::Quic(recv))))
+				if let Some(model) = self.model.recv_packet_unrestricted(pkt.clone()) {
+					Ok(Task::Packet(Packet::new(model, PacketSource::Quic(recv))))
+				} else {
+					Err(Error::InvalidUdpSession(pkt.assoc_id(), pkt.pkt_id()))
+				}
 			}
 			Header::Dissociate(dissoc) => {
 				let model = self.model.recv_dissociate(dissoc);
@@ -352,14 +355,17 @@ impl Connection<side::Server> {
 			Header::Authenticate(_) => Err(Error::BadCommandDatagram("authenticate", dg.into_inner())),
 			Header::Connect(_) => Err(Error::BadCommandDatagram("connect", dg.into_inner())),
 			Header::Packet(pkt) => {
-				let model = self.model.recv_packet_unrestricted(pkt);
-				let pos = dg.position() as usize;
-				let mut buf = dg.into_inner();
-				if (pos + model.size() as usize) <= buf.len() {
-					buf = buf.slice(pos..pos + model.size() as usize);
-					Ok(Task::Packet(Packet::new(model, PacketSource::Native(buf))))
+				if let Some(model) = self.model.recv_packet_unrestricted(pkt.clone()) {
+					let pos = dg.position() as usize;
+					let mut buf = dg.into_inner();
+					if (pos + model.size() as usize) <= buf.len() {
+						buf = buf.slice(pos..pos + model.size() as usize);
+						Ok(Task::Packet(Packet::new(model, PacketSource::Native(buf))))
+					} else {
+						Err(Error::PayloadLength(model.size() as usize, buf.len() - pos))
+					}
 				} else {
-					Err(Error::PayloadLength(model.size() as usize, buf.len() - pos))
+					Err(Error::InvalidUdpSession(pkt.assoc_id(), pkt.pkt_id()))
 				}
 			}
 			Header::Dissociate(_) => Err(Error::BadCommandDatagram("dissociate", dg.into_inner())),

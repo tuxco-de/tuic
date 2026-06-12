@@ -535,7 +535,7 @@ mod model_tests {
 
 		// Create a session via recv_packet_unrestricted
 		let header = crate::Packet::new(99, 0, 1, 0, 5, Address::DomainAddress("test.com".to_string(), 80));
-		let _pkt = conn.recv_packet_unrestricted(header);
+		let _pkt = conn.recv_packet_unrestricted(header).unwrap();
 		assert_eq!(conn.task_associate_count(), 1);
 
 		let dissoc_header = crate::Dissociate::new(99);
@@ -624,7 +624,7 @@ mod model_tests {
 			payload.len() as u16,
 			Address::DomainAddress("test.com".to_string(), 53),
 		);
-		let pkt_rx = conn.recv_packet_unrestricted(header);
+		let pkt_rx = conn.recv_packet_unrestricted(header).unwrap();
 
 		let result = pkt_rx.assemble(payload.to_vec()).unwrap();
 		assert!(result.is_some());
@@ -643,19 +643,19 @@ mod model_tests {
 
 		// Fragment 0 (first, has address)
 		let header0 = crate::Packet::new(1, 0, 3, 0, 5, Address::DomainAddress("test.com".to_string(), 53));
-		let pkt0 = conn.recv_packet_unrestricted(header0);
+		let pkt0 = conn.recv_packet_unrestricted(header0).unwrap();
 		let result0 = pkt0.assemble(vec![1, 2, 3, 4, 5]).unwrap();
 		assert!(result0.is_none()); // not complete yet
 
 		// Fragment 1 (middle, no address)
 		let header1 = crate::Packet::new(1, 0, 3, 1, 5, Address::None);
-		let pkt1 = conn.recv_packet_unrestricted(header1);
+		let pkt1 = conn.recv_packet_unrestricted(header1).unwrap();
 		let result1 = pkt1.assemble(vec![6, 7, 8, 9, 10]).unwrap();
 		assert!(result1.is_none()); // not complete yet
 
 		// Fragment 2 (last, no address)
 		let header2 = crate::Packet::new(1, 0, 3, 2, 3, Address::None);
-		let pkt2 = conn.recv_packet_unrestricted(header2);
+		let pkt2 = conn.recv_packet_unrestricted(header2).unwrap();
 		let result2 = pkt2.assemble(vec![11, 12, 13]).unwrap();
 		assert!(result2.is_some()); // now complete
 
@@ -673,7 +673,7 @@ mod model_tests {
 
 		// frag_id >= frag_total should fail
 		let header = crate::Packet::new(1, 0, 2, 5, 5, Address::DomainAddress("test.com".to_string(), 53));
-		let pkt = conn.recv_packet_unrestricted(header);
+		let pkt = conn.recv_packet_unrestricted(header).unwrap();
 		let result = pkt.assemble(vec![1, 2, 3, 4, 5]);
 		assert!(result.is_err());
 	}
@@ -684,12 +684,12 @@ mod model_tests {
 
 		// Send first fragment
 		let header0 = crate::Packet::new(1, 0, 2, 0, 5, Address::DomainAddress("test.com".to_string(), 53));
-		let pkt0 = conn.recv_packet_unrestricted(header0);
+		let pkt0 = conn.recv_packet_unrestricted(header0).unwrap();
 		pkt0.assemble(vec![1, 2, 3, 4, 5]).unwrap();
 
 		// Send duplicate fragment 0
 		let header0_dup = crate::Packet::new(1, 0, 2, 0, 5, Address::DomainAddress("test.com".to_string(), 53));
-		let pkt0_dup = conn.recv_packet_unrestricted(header0_dup);
+		let pkt0_dup = conn.recv_packet_unrestricted(header0_dup).unwrap();
 		let result = pkt0_dup.assemble(vec![1, 2, 3, 4, 5]);
 		assert!(result.is_err());
 	}
@@ -700,7 +700,7 @@ mod model_tests {
 
 		// First fragment (frag_id=0) must have an address
 		let header = crate::Packet::new(1, 0, 2, 0, 5, Address::None);
-		let pkt = conn.recv_packet_unrestricted(header);
+		let pkt = conn.recv_packet_unrestricted(header).unwrap();
 		let result = pkt.assemble(vec![1, 2, 3, 4, 5]);
 		assert!(result.is_err());
 	}
@@ -711,12 +711,12 @@ mod model_tests {
 
 		// First send fragment 0
 		let header0 = crate::Packet::new(1, 0, 2, 0, 5, Address::DomainAddress("test.com".to_string(), 53));
-		let pkt0 = conn.recv_packet_unrestricted(header0);
+		let pkt0 = conn.recv_packet_unrestricted(header0).unwrap();
 		pkt0.assemble(vec![1, 2, 3, 4, 5]).unwrap();
 
 		// Non-first fragment should NOT have an address
 		let header1 = crate::Packet::new(1, 0, 2, 1, 5, Address::DomainAddress("other.com".to_string(), 80));
-		let pkt1 = conn.recv_packet_unrestricted(header1);
+		let pkt1 = conn.recv_packet_unrestricted(header1).unwrap();
 		let result = pkt1.assemble(vec![6, 7, 8, 9, 10]);
 		assert!(result.is_err());
 	}
@@ -750,7 +750,7 @@ mod model_tests {
 
 		// Create session and receive a partial packet
 		let header = crate::Packet::new(1, 0, 2, 0, 5, Address::DomainAddress("test.com".to_string(), 53));
-		let pkt = conn.recv_packet_unrestricted(header);
+		let pkt = conn.recv_packet_unrestricted(header).unwrap();
 		pkt.assemble(vec![1, 2, 3, 4, 5]).unwrap();
 
 		// Wait so elapsed > 0

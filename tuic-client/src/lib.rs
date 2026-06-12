@@ -72,10 +72,10 @@ impl AppContext {
 					.conn_mgr
 					.get_conn(self.socks5_udp_sessions.clone(), self.fwd_udp_sessions.clone())
 					.await
-					.unwrap_or_else(|err| {
+					.map_err(|err| {
 						error!("[relay] first on-demand connection failed: {err}");
-						std::process::exit(1);
-					});
+						err
+					})?;
 				self.first_connected.store(true, Ordering::Relaxed);
 				Ok(conn)
 			}
@@ -153,7 +153,7 @@ pub async fn run(cfg: Config) -> eyre::Result<()> {
 	}
 
 	let has_forwarding = !cfg.local.tcp_forward.is_empty() || !cfg.local.udp_forward.is_empty();
-	forward::start(ctx.clone(), cfg.local.tcp_forward, cfg.local.udp_forward).await;
+	forward::start(ctx.clone(), cfg.local.tcp_forward, cfg.local.udp_forward).await?;
 	if ctx.socks5.is_some() {
 		socks5::Server::start(ctx.clone()).await;
 	} else if has_forwarding {
