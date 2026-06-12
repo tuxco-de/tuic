@@ -4,6 +4,14 @@ Delicately-TUICed 0-RTT proxy protocol
 
 A fork of original TUIC repo https://github.com/tuic-protocol/tuic
 
+## Documentation
+
+- [System architecture design](docs/architecture.md)
+- [Usage guide](docs/user-guide.md)
+- [Linux one-click server deployment](scripts/deploy-server.sh)
+- [Client configuration reference](tuic-client/README.md)
+- [Server configuration reference](tuic-server/README.md)
+
 Compared to origin, this fork's new features:
 
 **Infrastructure & CI/CD:**
@@ -63,10 +71,10 @@ Fully-detailed TUIC protocol specification can be found in [SPEC.md](https://git
 
 There are 4 crates provided in this repository:
 
-- **[tuic](https://github.com/Itsusinn/tuic/tree/dev/tuic)** - Library. The protocol itself, protocol & model abstraction, synchronous / asynchronous marshalling
-- **[tuic-quinn](https://github.com/Itsusinn/tuic/tree/dev/tuic-quinn)** - Library. A thin layer on top of [quinn](https://github.com/quinn-rs/quinn) to provide functions of TUIC
-- **[tuic-server](https://github.com/Itsusinn/tuic/tree/dev/tuic-server)** - Binary. Minimalistic TUIC server implementation as a reference
-- **[tuic-client](https://github.com/Itsusinn/tuic/tree/dev/tuic-client)** - Binary. Minimalistic TUIC client implementation as a reference
+- **[tuic-core](tuic-core)** - Library. TUIC v5 protocol types, marshalling, connection model, and Quinn integration
+- **[tuic-server](tuic-server)** - Binary and library. TUIC server, ACL/outbound routing, TLS/ACME, camouflage, and management API
+- **[tuic-client](tuic-client)** - Binary and library. TUIC client, local SOCKS5 proxy, and TCP/UDP forwarding
+- **[tuic-tests](tuic-tests)** - Integration tests covering client/server interoperability
 
 
 
