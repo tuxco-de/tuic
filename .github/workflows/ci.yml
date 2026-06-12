@@ -21,6 +21,7 @@ env:
   RUST_TOOLCHAIN: "stable"
   RUSTC_BOOTSTRAP: "1"
   SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+  CROSS_NO_WARNINGS: "0"
 
 permissions:
   contents: write
