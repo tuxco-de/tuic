@@ -144,6 +144,8 @@ gc_interval = "10s"
 gc_lifetime = "30s"
 # Maximum packet size received from outbound UDP sockets (bytes)
 max_external_packet_size = 1500
+# Maximum concurrent UDP relay sessions per client connection.
+max_udp_sessions = 1024
 # How long to preserve TCP and UDP I/O tasks
 stream_timeout = "60s"
 # Tokio runtime to use: auto, multi_thread, current_thread

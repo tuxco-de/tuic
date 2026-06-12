@@ -343,8 +343,33 @@ impl Config {
 		};
 
 		let config: Config = figmet.extract().map_err(ConfigError::Figment)?;
+		config.validate()?;
 
 		Ok(config)
+	}
+
+	fn validate(&self) -> eyre::Result<()> {
+		if let Some(proxy) = &self.relay.proxy {
+			match (&proxy.username, &proxy.password) {
+				(None, None) => {}
+				(Some(username), Some(password)) => {
+					if username.len() > u8::MAX as usize || password.len() > u8::MAX as usize {
+						return Err(
+							ConfigError::Invalid("proxy username and password must not exceed 255 bytes".to_string()).into(),
+						);
+					}
+				}
+				_ => {
+					return Err(
+						ConfigError::Invalid("proxy username and password must be configured together".to_string()).into(),
+					);
+				}
+			}
+			if proxy.udp_buffer_size == 0 {
+				return Err(ConfigError::Invalid("proxy udp_buffer_size must be greater than zero".to_string()).into());
+			}
+		}
+		Ok(())
 	}
 }
 
@@ -478,6 +503,8 @@ pub enum ConfigError {
 	Toml(String),
 	#[error("configuration error: {0}")]
 	Figment(#[from] figment::Error),
+	#[error("invalid configuration: {0}")]
+	Invalid(String),
 }
 
 impl From<toml::de::Error> for ConfigError {
@@ -775,6 +802,30 @@ server = "127.0.0.1:1081"
 		assert!(proxy.password.is_none());
 		// Should use default udp_buffer_size
 		assert_eq!(proxy.udp_buffer_size, 2048);
+	}
+
+	#[test]
+	fn proxy_credentials_must_be_configured_together() {
+		let mut config = Config::default();
+		config.relay.proxy = Some(ProxyConfig {
+			username: Some("user".to_string()),
+			password: None,
+			..Default::default()
+		});
+
+		assert!(config.validate().unwrap_err().downcast_ref::<ConfigError>().is_some());
+	}
+
+	#[test]
+	fn proxy_credentials_must_fit_socks5_length_fields() {
+		let mut config = Config::default();
+		config.relay.proxy = Some(ProxyConfig {
+			username: Some("u".repeat(256)),
+			password: Some("password".to_string()),
+			..Default::default()
+		});
+
+		assert!(config.validate().unwrap_err().downcast_ref::<ConfigError>().is_some());
 	}
 
 	#[test]

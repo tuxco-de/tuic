@@ -181,7 +181,7 @@ async fn run_udp_forwarder(entry: UdpForward, ctx: Arc<crate::AppContext>) {
 						Some(id) => match ctx.fwd_udp_sessions.get(&id).await {
 							Some(session) => {
 								session.touch();
-								id
+								Some(id)
 							}
 							None => {
 								src_map.lock().unwrap().remove(&src_addr);
@@ -190,6 +190,10 @@ async fn run_udp_forwarder(entry: UdpForward, ctx: Arc<crate::AppContext>) {
 						},
 						None => allocate_fwd_session(&ctx, &socket, &src_map, src_addr, entry.timeout).await,
 					}
+				};
+				let Some(assoc_id) = assoc_id else {
+					warn!("[forward-udp] no association ID available; dropping packet from {src_addr}");
+					continue;
 				};
 
 				let remote = entry.remote.clone();
@@ -240,13 +244,30 @@ async fn allocate_fwd_session(
 	src_map: &Arc<Mutex<HashMap<SocketAddr, u16>>>,
 	src_addr: SocketAddr,
 	timeout: Duration,
-) -> u16 {
-	let id = 0x8000 | (ctx.next_fwd_assoc_id.fetch_add(1, Ordering::Relaxed) & 0x7fff);
-	let session = ForwardUdpSession::new(socket.clone(), src_addr, id);
-	ctx.fwd_udp_sessions.insert(id, session).await;
-	src_map.lock().unwrap().insert(src_addr, id);
-	tokio::spawn(idle_watcher(id, src_addr, timeout, ctx.clone(), src_map.clone()));
-	id
+) -> Option<u16> {
+	let _guard = ctx.fwd_assoc_alloc_lock.lock().await;
+	if let Some(id) = next_available_assoc_id(&ctx.next_fwd_assoc_id, &ctx.fwd_udp_sessions).await {
+		let session = Arc::new(ForwardUdpSession::new(socket.clone(), src_addr, id));
+		ctx.fwd_udp_sessions.insert(id, session.clone()).await;
+		src_map.lock().unwrap().insert(src_addr, id);
+		tokio::spawn(idle_watcher(id, src_addr, timeout, ctx.clone(), src_map.clone(), session));
+		Some(id)
+	} else {
+		None
+	}
+}
+
+async fn next_available_assoc_id(
+	counter: &std::sync::atomic::AtomicU16,
+	sessions: &moka::future::Cache<u16, Arc<ForwardUdpSession>>,
+) -> Option<u16> {
+	for _ in 0..=0x7fff {
+		let id = 0x8000 | (counter.fetch_add(1, Ordering::Relaxed) & 0x7fff);
+		if sessions.get(&id).await.is_none() {
+			return Some(id);
+		}
+	}
+	None
 }
 
 /// Remove `src_addr` from `src_map` **only** if it still points at `assoc_id`.
@@ -279,6 +300,7 @@ async fn idle_watcher(
 	timeout: Duration,
 	ctx: Arc<crate::AppContext>,
 	src_map: Arc<Mutex<HashMap<SocketAddr, u16>>>,
+	expected_session: Arc<ForwardUdpSession>,
 ) {
 	if timeout.is_zero() {
 		return;
@@ -293,11 +315,20 @@ async fn idle_watcher(
 				return;
 			}
 		};
+		if !Arc::ptr_eq(&session, &expected_session) {
+			return;
+		}
 		let idle = session.idle_for();
 		drop(session);
 
 		if idle >= timeout {
-			if ctx.fwd_udp_sessions.remove(&assoc_id).await.is_some() {
+			let _guard = ctx.fwd_assoc_alloc_lock.lock().await;
+			let owns_slot = ctx
+				.fwd_udp_sessions
+				.get(&assoc_id)
+				.await
+				.is_some_and(|current| Arc::ptr_eq(&current, &expected_session));
+			if owns_slot && ctx.fwd_udp_sessions.remove(&assoc_id).await.is_some() {
 				debug!(
 					"[forward-udp] [{assoc:#06x}] idle for {idle:?} (>= {timeout:?}); dissociate",
 					assoc = assoc_id
@@ -371,6 +402,21 @@ mod tests {
 			"send must reset idle, got {:?}",
 			session.idle_for()
 		);
+	}
+
+	#[tokio::test]
+	async fn association_id_allocation_skips_occupied_slots() {
+		let socket = bound_socket().await;
+		let sessions = moka::future::Cache::new(8);
+		sessions
+			.insert(
+				0x8000,
+				Arc::new(ForwardUdpSession::new(socket, "127.0.0.1:1".parse().unwrap(), 0x8000)),
+			)
+			.await;
+		let counter = std::sync::atomic::AtomicU16::new(0);
+
+		assert_eq!(next_available_assoc_id(&counter, &sessions).await, Some(0x8001));
 	}
 
 	#[test]

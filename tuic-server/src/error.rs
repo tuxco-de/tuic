@@ -23,6 +23,8 @@ pub enum Error {
 	DuplicatedAuth,
 	#[error("authentication failed: {0}")]
 	AuthFailed(Uuid),
+	#[error("maximum clients reached for user: {0}")]
+	MaximumClientsReached(Uuid),
 	#[error("received packet from unexpected source")]
 	UnexpectedPacketSource,
 	#[error("{0}: {1}")]

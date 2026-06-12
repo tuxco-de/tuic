@@ -130,6 +130,9 @@ pub struct Config {
 	#[educe(Default = 1500)]
 	pub max_external_packet_size: usize,
 
+	#[educe(Default = 1024)]
+	pub max_udp_sessions: u64,
+
 	#[serde(with = "humantime_serde")]
 	#[educe(Default(expression = Duration::from_secs(60)))]
 	pub stream_timeout: Duration,
@@ -1259,6 +1262,7 @@ reverse_proxy_url = "https://127.0.0.1:443"
 		assert_eq!(result.gc_interval, Duration::from_secs(10));
 		assert_eq!(result.gc_lifetime, Duration::from_secs(30));
 		assert_eq!(result.max_external_packet_size, 1500);
+		assert_eq!(result.max_udp_sessions, 1024);
 		assert_eq!(result.stream_timeout, Duration::from_secs(60));
 	}
 	#[tokio::test]

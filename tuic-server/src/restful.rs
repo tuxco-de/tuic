@@ -16,15 +16,23 @@ use axum_extra::{
 };
 use moka::future::Cache;
 use serde_json::json;
-use tracing::warn;
+use tracing::{error, warn};
 use tuic_core::quinn::{QuinnConnection, VarInt};
 use uuid::Uuid;
 
 use crate::AppContext;
 
-pub async fn start(ctx: Arc<AppContext>) {
-	let restful = ctx.cfg.restful.as_ref().unwrap();
-	let addr = restful.addr;
+pub async fn bind(ctx: &AppContext) -> std::io::Result<Option<tokio::net::TcpListener>> {
+	let Some(restful) = ctx.cfg.restful.as_ref() else {
+		return Ok(None);
+	};
+	Ok(Some(tokio::net::TcpListener::bind(restful.addr).await?))
+}
+
+pub async fn start(ctx: Arc<AppContext>, listener: tokio::net::TcpListener) {
+	let addr = listener
+		.local_addr()
+		.unwrap_or_else(|_| ctx.cfg.restful.as_ref().unwrap().addr);
 	let app = Router::new()
 		.route("/kick", post(kick))
 		.route("/online", get(list_online))
@@ -32,9 +40,10 @@ pub async fn start(ctx: Arc<AppContext>) {
 		.route("/traffic", get(list_traffic))
 		.route("/reset_traffic", get(reset_traffic))
 		.with_state(ctx);
-	let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
 	warn!("RESTful server started, listening on {addr}");
-	axum::serve(listener, app).await.unwrap();
+	if let Err(err) = axum::serve(listener, app).await {
+		error!("RESTful server stopped: {err}");
+	}
 }
 
 async fn kick(
@@ -146,17 +155,16 @@ async fn reset_traffic(
 	(StatusCode::OK, Json(result))
 }
 
-pub async fn client_connect(ctx: &AppContext, uuid: &Uuid, conn: QuinnConnection) {
+pub async fn client_connect(ctx: &AppContext, uuid: &Uuid, conn: QuinnConnection) -> bool {
 	if let Some(cfg) = ctx.cfg.restful.as_ref() {
 		let Some(counter) = ctx.online_counter.get(uuid) else {
 			warn!("UUID {uuid} not in users table during client_connect, closing connection");
 			conn.close(VarInt::from_u32(6003), b"Internal error");
-			return;
+			return false;
 		};
-		let current = counter.fetch_add(1, Ordering::Release);
-		if cfg.maximum_clients_per_user != 0 && current > cfg.maximum_clients_per_user {
+		if !try_reserve_client(counter, cfg.maximum_clients_per_user) {
 			conn.close(VarInt::from_u32(6001), b"Reached maximum clients limitation");
-			return;
+			return false;
 		}
 		let cap = if cfg.maximum_clients_per_user == 0 {
 			10000
@@ -168,10 +176,11 @@ pub async fn client_connect(ctx: &AppContext, uuid: &Uuid, conn: QuinnConnection
 		let client: crate::compat::QuicClient = conn.into();
 		cache.insert(client.stable_id(), client).await;
 	}
+	true
 }
 pub async fn client_disconnect(ctx: &AppContext, uuid: &Uuid, conn: QuinnConnection) {
 	if let Some(counter) = ctx.online_counter.get(uuid) {
-		counter.fetch_sub(1, Ordering::SeqCst);
+		release_client(counter);
 	} else {
 		warn!("UUID {uuid} not in users table during client_disconnect");
 	}
@@ -180,6 +189,18 @@ pub async fn client_disconnect(ctx: &AppContext, uuid: &Uuid, conn: QuinnConnect
 		let client: crate::compat::QuicClient = conn.into();
 		cache.invalidate(&client.stable_id()).await;
 	}
+}
+
+fn try_reserve_client(counter: &std::sync::atomic::AtomicUsize, limit: usize) -> bool {
+	counter
+		.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+			(limit == 0 || current < limit).then_some(current + 1)
+		})
+		.is_ok()
+}
+
+fn release_client(counter: &std::sync::atomic::AtomicUsize) {
+	let _ = counter.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| current.checked_sub(1));
 }
 
 pub fn traffic_tx(ctx: &AppContext, uuid: &Uuid, size: usize) {
@@ -191,5 +212,32 @@ pub fn traffic_tx(ctx: &AppContext, uuid: &Uuid, size: usize) {
 pub fn traffic_rx(ctx: &AppContext, uuid: &Uuid, size: usize) {
 	if let Some((__, rx)) = ctx.traffic_stats.get(uuid) {
 		rx.fetch_add(size, Ordering::SeqCst);
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use std::sync::atomic::{AtomicUsize, Ordering};
+
+	use super::{release_client, try_reserve_client};
+
+	#[test]
+	fn client_limit_is_exact_and_never_underflows() {
+		let counter = AtomicUsize::new(0);
+		assert!(try_reserve_client(&counter, 1));
+		assert!(!try_reserve_client(&counter, 1));
+		assert_eq!(counter.load(Ordering::Relaxed), 1);
+
+		release_client(&counter);
+		release_client(&counter);
+		assert_eq!(counter.load(Ordering::Relaxed), 0);
+	}
+
+	#[test]
+	fn zero_client_limit_is_unlimited() {
+		let counter = AtomicUsize::new(0);
+		assert!(try_reserve_client(&counter, 0));
+		assert!(try_reserve_client(&counter, 0));
+		assert_eq!(counter.load(Ordering::Relaxed), 2);
 	}
 }

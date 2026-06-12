@@ -32,10 +32,12 @@ pub struct AppContext {
 	/// UDP session registry for SOCKS5 UDP associate
 	pub socks5_udp_sessions: Cache<u16, socks5::UdpSession>,
 	/// UDP session registry for TCP/UDP port forwarding
-	pub fwd_udp_sessions: Cache<u16, forward::ForwardUdpSession>,
+	pub fwd_udp_sessions: Cache<u16, Arc<forward::ForwardUdpSession>>,
 	/// Next association ID counter for UDP forwarding (high bit set to avoid
 	/// collisions with SOCKS5 IDs)
 	pub next_fwd_assoc_id: AtomicU16,
+	/// Serializes association ID allocation and removal.
+	pub fwd_assoc_alloc_lock: AsyncMutex<()>,
 	/// Startup connection behavior.
 	pub startup_mode: config::StartupMode,
 	/// Whether the first relay connection has been established at least once.
@@ -137,6 +139,7 @@ pub async fn run(cfg: Config) -> eyre::Result<()> {
 		socks5_udp_sessions: Cache::builder().max_capacity(1024).time_to_idle(socks5_cache_tti).build(),
 		fwd_udp_sessions: Cache::builder().max_capacity(1024).time_to_idle(fwd_cache_tti).build(),
 		next_fwd_assoc_id: AtomicU16::new(0),
+		fwd_assoc_alloc_lock: AsyncMutex::new(()),
 		startup_mode,
 		first_connected: AtomicBool::new(false),
 		first_connect_lock: AsyncMutex::new(()),

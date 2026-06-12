@@ -1,11 +1,17 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+	sync::{
+		Arc,
+		atomic::{AtomicBool, Ordering},
+	},
+	time::Duration,
+};
 
 use arc_swap::ArcSwap;
 use bytes::Bytes;
 use moka::future::Cache;
 use peekable::tokio::AsyncPeekExt;
 use smallvec::SmallVec;
-use tokio::time;
+use tokio::{sync::Mutex as AsyncMutex, time};
 use tracing::{Instrument, Span, debug, info, info_span, warn};
 use tuic_core::quinn::{Authenticate, Connecting, Connection as Model, QuinnConnection, VarInt, side};
 
@@ -53,7 +59,10 @@ pub struct Connection {
 	inner: QuinnConnection,
 	model: Model<side::Server>,
 	auth: Authenticated,
+	auth_lock: Arc<AsyncMutex<()>>,
+	online_registered: Arc<AtomicBool>,
 	udp_sessions: Cache<u16, Arc<UdpSession>>,
+	udp_session_create_lock: Arc<AsyncMutex<()>>,
 	udp_relay_mode: Arc<ArcSwap<Option<UdpRelayMode>>>,
 }
 
@@ -149,17 +158,22 @@ impl Connection {
 	}
 
 	fn new(ctx: Arc<AppContext>, conn: QuinnConnection) -> Self {
+		let max_udp_sessions = ctx.cfg.max_udp_sessions;
 		Self {
 			ctx,
 			inner: conn.clone(),
 			model: Model::<side::Server>::new(conn),
 			auth: Authenticated::new(),
-			udp_sessions: Cache::new(u16::MAX as u64),
+			auth_lock: Arc::new(AsyncMutex::new(())),
+			online_registered: Arc::new(AtomicBool::new(false)),
+			udp_sessions: Cache::new(max_udp_sessions),
+			udp_session_create_lock: Arc::new(AsyncMutex::new(())),
 			udp_relay_mode: Arc::new(ArcSwap::new(None.into())),
 		}
 	}
 
 	async fn authenticate(&self, auth: &Authenticate) -> Result<(), Error> {
+		let _guard = self.auth_lock.lock().await;
 		if self.auth.get().is_some() {
 			Err(Error::DuplicatedAuth)
 		} else if self
@@ -169,7 +183,12 @@ impl Connection {
 			.get(&auth.uuid())
 			.is_some_and(|password| auth.validate(password).unwrap_or(false))
 		{
-			self.auth.set(auth.uuid()).await;
+			if !restful::client_connect(&self.ctx, &auth.uuid(), self.inner.clone()).await {
+				return Err(Error::MaximumClientsReached(auth.uuid()));
+			}
+			self.auth.set(auth.uuid());
+			self.online_registered
+				.store(self.ctx.cfg.restful.is_some(), Ordering::Release);
 			Span::current().record("user", auth.uuid().to_string());
 			Ok(())
 		} else {
@@ -178,13 +197,9 @@ impl Connection {
 	}
 
 	async fn timeout_authenticate(self, timeout: Duration) {
-		time::sleep(timeout).await;
-
-		match self.auth.get() {
-			Some(uuid) => {
-				restful::client_connect(&self.ctx, &uuid, self.inner).await;
-			}
-			None => {
+		tokio::select! {
+			_ = self.auth.wait() => {}
+			_ = time::sleep(timeout) => {
 				warn!("[authenticate] timeout");
 				self.close();
 			}
@@ -196,7 +211,9 @@ impl Connection {
 			time::sleep(self.ctx.cfg.gc_interval).await;
 
 			if self.is_closed() {
-				if let Some(uuid) = self.auth.get() {
+				if self.online_registered.swap(false, Ordering::AcqRel)
+					&& let Some(uuid) = self.auth.get()
+				{
 					restful::client_disconnect(&self.ctx, &uuid, self.inner).await;
 				}
 				break;

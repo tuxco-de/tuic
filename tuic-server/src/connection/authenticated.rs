@@ -31,7 +31,7 @@ impl Authenticated {
 	}
 
 	/// invoking 'set' means auth success
-	pub async fn set(&self, uuid: Uuid) {
+	pub fn set(&self, uuid: Uuid) {
 		self.0.uuid.store(Some(Arc::new(uuid)));
 
 		// Mark as authenticated and notify all waiters
@@ -89,7 +89,7 @@ mod tests {
 		let auth = Authenticated::new();
 		assert!(auth.get().is_none());
 		let uuid = Uuid::new_v4();
-		auth.set(uuid).await;
+		auth.set(uuid);
 		assert_eq!(auth.get(), Some(uuid));
 	}
 
@@ -102,7 +102,7 @@ mod tests {
 			auth_clone.wait().await;
 			assert_eq!(auth_clone.get(), Some(uuid));
 		});
-		auth.set(uuid).await;
+		auth.set(uuid);
 		wait_fut.await.unwrap();
 	}
 }

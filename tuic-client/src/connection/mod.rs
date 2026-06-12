@@ -37,7 +37,7 @@ use self::socks5::Socks5UdpSocket;
 
 /// Convenience type aliases for the two UDP session maps
 type Socks5Sessions = Cache<u16, crate::socks5::UdpSession>;
-type FwdSessions = Cache<u16, crate::forward::ForwardUdpSession>;
+type FwdSessions = Cache<u16, Arc<crate::forward::ForwardUdpSession>>;
 
 /// Default error code for QUIC connection
 pub const ERROR_CODE: VarInt = VarInt::from_u32(0);
@@ -449,7 +449,7 @@ async fn socks5_handshake(proxy_cfg: &ProxyConfig) -> Result<(tokio::net::TcpStr
 		.map_err(|e| Error::Socks5(format!("failed to connect to proxy: {}", e)))?;
 
 	// Greeting
-	if proxy_cfg.username.is_some() {
+	if proxy_cfg.username.is_some() && proxy_cfg.password.is_some() {
 		stream.write_all(&[0x05, 0x02, 0x00, 0x02]).await?;
 	} else {
 		stream.write_all(&[0x05, 0x01, 0x00]).await?;
@@ -465,8 +465,12 @@ async fn socks5_handshake(proxy_cfg: &ProxyConfig) -> Result<(tokio::net::TcpStr
 		0x00 => {} // No auth
 		0x02 => {
 			// Password auth
-			let username = proxy_cfg.username.as_ref().unwrap();
-			let password = proxy_cfg.password.as_ref().unwrap();
+			let (Some(username), Some(password)) = (&proxy_cfg.username, &proxy_cfg.password) else {
+				return Err(Error::InvalidSocks5Auth);
+			};
+			if username.len() > u8::MAX as usize || password.len() > u8::MAX as usize {
+				return Err(Error::InvalidSocks5Auth);
+			}
 			let mut auth_buf = Vec::new();
 			auth_buf.push(0x01); // Version
 			auth_buf.push(username.len() as u8);

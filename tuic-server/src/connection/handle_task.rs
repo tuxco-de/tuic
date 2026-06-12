@@ -185,9 +185,13 @@ impl Connection {
 		info!("[TCP] {target_addr} ");
 
 		let process = async {
-			// First resolve using default outbound to get candidate IPs
-			let default_outbound = &self.ctx.cfg.outbound.default;
-			let initial_addrs = self.resolve_and_filter_addresses(conn.addr(), default_outbound, None).await?;
+			// Resolve once so ACL evaluation and connection use the same DNS answer.
+			let initial_addrs: Vec<SocketAddr> = resolve_dns(conn.addr()).await?.collect();
+			if initial_addrs.is_empty() {
+				return Err(eyre!("No addresses resolved"));
+			}
+			let mut acl_addrs = initial_addrs.clone();
+			self.filter_addresses(&mut acl_addrs, &self.ctx.cfg.outbound.default)?;
 
 			// Decide ACL based on resolved addresses
 			let port = conn.addr().port();
@@ -195,7 +199,7 @@ impl Connection {
 				Address::DomainAddress(d, _) => Some(d.as_str()),
 				_ => None,
 			};
-			let (outbound_name, hijack, drop) = self.decide_acl_for_addrs(&initial_addrs, port, true, domain).await;
+			let (outbound_name, hijack, drop) = self.decide_acl_for_addrs(&acl_addrs, port, true, domain).await;
 
 			if drop {
 				warn!("[TCP] {target_addr} blocked by ACL");
@@ -207,11 +211,16 @@ impl Connection {
 			let outbound = self.select_outbound_rule(&outbound_name);
 
 			// Establish connection according to outbound type
-			let mut stream = if outbound.kind.eq_ignore_ascii_case("socks5") {
-				self.connect_via_socks5(outbound, conn.addr(), hijack).await?
+			let mut addrs = if let Some(hijack_ip) = hijack {
+				vec![SocketAddr::new(hijack_ip, port)]
 			} else {
-				// Resolve again if outbound/ip_mode differs or hijack is requested
-				let addrs = self.resolve_and_filter_addresses(conn.addr(), outbound, hijack).await?;
+				initial_addrs
+			};
+			self.filter_addresses(&mut addrs, outbound)?;
+
+			let mut stream = if outbound.kind.eq_ignore_ascii_case("socks5") {
+				self.connect_via_socks5(outbound, addrs[0]).await?
+			} else {
 				self.connect_to_addresses(addrs, outbound).await?
 			};
 
@@ -242,21 +251,7 @@ impl Connection {
 		}
 	}
 
-	async fn resolve_and_filter_addresses(
-		&self,
-		addr: &Address,
-		outbound: &OutboundRule,
-		hijack: Option<IpAddr>,
-	) -> eyre::Result<Vec<SocketAddr>> {
-		// If hijack is specified, bypass DNS and use hijack IP with original port
-		if let Some(hijack_ip) = hijack {
-			let port = addr.port();
-			let sa = SocketAddr::new(hijack_ip, port);
-			return Ok(vec![sa]);
-		}
-
-		let mut addrs: Vec<SocketAddr> = resolve_dns(addr).await?.collect();
-
+	fn filter_addresses(&self, addrs: &mut Vec<SocketAddr>, outbound: &OutboundRule) -> eyre::Result<()> {
 		match outbound.ip_mode.unwrap_or(StackPrefer::V4first) {
 			StackPrefer::V4first => {
 				addrs.sort_by_key(|a| !a.is_ipv4());
@@ -276,7 +271,7 @@ impl Connection {
 			return Err(eyre!("No addresses available after filtering"));
 		}
 
-		Ok(addrs)
+		Ok(())
 	}
 
 	async fn connect_to_addresses(&self, addrs: Vec<SocketAddr>, outbound: &OutboundRule) -> eyre::Result<TcpStream> {
@@ -328,15 +323,6 @@ impl Connection {
 				src_addr = addr
 			);
 
-			let session = match self.udp_sessions.get(&assoc_id).await {
-				Some(s) => s,
-				None => {
-					let session = UdpSession::new(self.ctx.clone(), self.clone(), assoc_id, self.udp_sessions.clone())?;
-					self.udp_sessions.insert(assoc_id, session.clone()).await;
-					session
-				}
-			};
-
 			// Resolve using default outbound and apply ACL
 			let initial_addrs: Vec<SocketAddr> = resolve_dns(&addr).await?.collect();
 			if initial_addrs.is_empty() {
@@ -382,12 +368,28 @@ impl Connection {
 				// Outbound other than direct is not supported for UDP yet; proceed as direct
 				warn!("[UDP-OUT] [{assoc_id:#06x}] outbound '{outbound_name}' not supported; using direct");
 			}
-
-			let socket_addr = if let Some(h) = hijack {
-				SocketAddr::new(h, addr.port())
+			let mut socket_addrs = if let Some(h) = hijack {
+				vec![SocketAddr::new(h, addr.port())]
 			} else {
-				// Use the first address resolved
-				initial_addrs[0]
+				initial_addrs
+			};
+			self.filter_addresses(&mut socket_addrs, outbound)?;
+			let socket_addr = socket_addrs[0];
+
+			let session = if let Some(session) = self.udp_sessions.get(&assoc_id).await {
+				session
+			} else {
+				let _guard = self.udp_session_create_lock.lock().await;
+				if let Some(session) = self.udp_sessions.get(&assoc_id).await {
+					session
+				} else {
+					if self.udp_sessions.entry_count() >= self.ctx.cfg.max_udp_sessions {
+						return Err(eyre!("maximum UDP session limit reached").into());
+					}
+					let session = UdpSession::new(self.ctx.clone(), self.clone(), assoc_id, self.udp_sessions.clone())?;
+					self.udp_sessions.insert(assoc_id, session.clone()).await;
+					session
+				}
 			};
 
 			let uuid = self.auth.get().ok_or_eyre("Unexpected authorization state")?;
@@ -454,12 +456,7 @@ async fn resolve_dns(addr: &Address) -> Result<impl Iterator<Item = SocketAddr>,
 }
 
 impl Connection {
-	async fn connect_via_socks5(
-		&self,
-		outbound: &OutboundRule,
-		target: &Address,
-		hijack: Option<IpAddr>,
-	) -> eyre::Result<TcpStream> {
+	async fn connect_via_socks5(&self, outbound: &OutboundRule, target: SocketAddr) -> eyre::Result<TcpStream> {
 		// 1) Resolve and connect to the SOCKS5 proxy
 		let proxy_addr = outbound
 			.addr
@@ -522,28 +519,9 @@ impl Connection {
 		}
 
 		// 4) CONNECT request to target
-		let (atyp, addr_bytes, port): (u8, Vec<u8>, u16) = if let Some(ip) = hijack {
-			match ip {
-				std::net::IpAddr::V4(v4) => (0x01, v4.octets().to_vec(), target.port()),
-				std::net::IpAddr::V6(v6) => (0x04, v6.octets().to_vec(), target.port()),
-			}
-		} else {
-			match target {
-				Address::DomainAddress(domain, port) => {
-					if domain.len() > 255 {
-						return Err(eyre!("domain name too long for socks5: {}", domain));
-					}
-					let mut v = Vec::with_capacity(1 + domain.len());
-					v.push(domain.len() as u8);
-					v.extend_from_slice(domain.as_bytes());
-					(0x03, v, *port)
-				}
-				Address::SocketAddress(sa) => match sa {
-					SocketAddr::V4(v4) => (0x01, v4.ip().octets().to_vec(), v4.port()),
-					SocketAddr::V6(v6) => (0x04, v6.ip().octets().to_vec(), v6.port()),
-				},
-				Address::None => return Err(eyre!("invalid target address for CONNECT: none")),
-			}
+		let (atyp, addr_bytes, port): (u8, Vec<u8>, u16) = match target {
+			SocketAddr::V4(v4) => (0x01, v4.ip().octets().to_vec(), v4.port()),
+			SocketAddr::V6(v6) => (0x04, v6.ip().octets().to_vec(), v6.port()),
 		};
 
 		let mut req = Vec::with_capacity(4 + addr_bytes.len() + 2);
