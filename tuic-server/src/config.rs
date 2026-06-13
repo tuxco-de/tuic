@@ -13,7 +13,6 @@ use figment::{
 };
 use figment_json5::Json5;
 use rand::{RngExt, distr::Alphanumeric, rng};
-use reqwest::Url;
 use serde::{Deserialize, Deserializer, Serialize};
 use tracing::{level_filters::LevelFilter, warn};
 use uuid::Uuid;
@@ -840,39 +839,7 @@ pub async fn parse_config(cli: Cli, env_state: EnvState) -> eyre::Result<Config>
 		config.tls.private_key.clone()
 	};
 
-	if let Some(camouflage) = &config.camouflage
-		&& camouflage.enabled
-	{
-		if camouflage.reverse_proxy_url.trim().is_empty() {
-			return Err(eyre::eyre!(
-				"`camouflage.reverse_proxy_url` is required when camouflage is enabled"
-			));
-		}
-		if !camouflage.reverse_proxy_url.starts_with("http://") && !camouflage.reverse_proxy_url.starts_with("https://") {
-			return Err(eyre::eyre!(
-				"`camouflage.reverse_proxy_url` must be an absolute URL and start with http:// or https://"
-			));
-		}
-		if camouflage
-			.reverse_proxy_hostname
-			.as_deref()
-			.is_some_and(|s| s.trim().is_empty())
-		{
-			return Err(eyre::eyre!("`camouflage.reverse_proxy_hostname` cannot be empty"));
-		}
-		let backend = Url::parse(camouflage.reverse_proxy_url.as_str())
-			.map_err(|err| eyre::eyre!("`camouflage.reverse_proxy_url` is invalid: {err}"))?;
-		if backend
-			.host_str()
-			.and_then(|host| host.parse::<std::net::IpAddr>().ok())
-			.is_some()
-			&& camouflage.reverse_proxy_hostname.is_none()
-		{
-			return Err(eyre::eyre!(
-				"`camouflage.reverse_proxy_hostname` is required when `camouflage.reverse_proxy_url` uses an IP address"
-			));
-		}
-	}
+
 
 	// Validate that all ACL rules reference valid outbounds
 	for (i, rule) in config.acl.iter().enumerate() {
@@ -1075,43 +1042,6 @@ mod tests {
 		assert!(cli.config.is_none());
 	}
 
-	#[tokio::test]
-	async fn test_camouflage_invalid_reverse_proxy_url() {
-		let config = r#"
-server = "127.0.0.1:8080"
-
-[tls]
-self_sign = true
-
-[users]
-"123e4567-e89b-12d3-a456-426614174000" = "password1"
-
-[camouflage]
-enabled = true
-reverse_proxy_url = "127.0.0.1:443"
-"#;
-		let result = test_parse_config(config, ".toml").await;
-		assert!(result.is_err());
-	}
-
-	#[tokio::test]
-	async fn test_camouflage_ip_reverse_proxy_url_requires_reverse_proxy_hostname() {
-		let config = r#"
-server = "127.0.0.1:8080"
-
-[tls]
-self_sign = true
-
-[users]
-"123e4567-e89b-12d3-a456-426614174000" = "password1"
-
-[camouflage]
-enabled = true
-reverse_proxy_url = "https://127.0.0.1:443"
-"#;
-		let result = test_parse_config(config, ".toml").await;
-		assert!(result.is_err());
-	}
 
 	#[tokio::test]
 	async fn test_outbound_no_configuration() {
