@@ -22,6 +22,7 @@ env:
   RUSTC_BOOTSTRAP: "1"
   SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
   CROSS_NO_WARNINGS: "0"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 permissions:
   contents: write
