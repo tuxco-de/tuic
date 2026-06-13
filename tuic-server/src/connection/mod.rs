@@ -93,7 +93,7 @@ impl Connection {
 					user = tracing::field::Empty,
 				);
 
-				if ctx.cfg.camouflage.as_ref().is_some_and(|cfg| cfg.enabled) {
+				if ctx.cfg.camouflage.enabled {
 					match conn.classify_h3_dispatch().await {
 						Ok(H3Dispatch::Camouflage {
 							prefetched_uni,

@@ -16,9 +16,9 @@ pub async fn handle(
 	prefetched_uni: Option<crate::h3_quinn_compat::PeekableRecvStream>,
 	prefetched_bi: Option<crate::h3_quinn_compat::PrefetchedBiRecv>,
 ) -> eyre::Result<()> {
-	let Some(_camouflage) = ctx.cfg.camouflage.as_ref().filter(|cfg| cfg.enabled) else {
+	if !ctx.cfg.camouflage.enabled {
 		return Ok(());
-	};
+	}
 
 	info!(
 		id = conn.stable_id() as u32,

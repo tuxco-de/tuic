@@ -83,8 +83,8 @@ pub struct Config {
 	pub server: SocketAddr,
 	pub users: HashMap<Uuid, String>,
 	pub tls: TlsConfig,
-	#[educe(Default = None)]
-	pub camouflage: Option<CamouflageConfig>,
+	#[serde(default)]
+	pub camouflage: CamouflageConfig,
 
 	#[educe(Default = "")]
 	pub data_dir: PathBuf,
@@ -149,58 +149,6 @@ pub struct Config {
 
 	pub experimental: ExperimentalConfig,
 
-	/// Old configuration fields
-	#[serde(default, rename = "self_sign")]
-	#[deprecated]
-	pub __self_sign: Option<bool>,
-	#[serde(default, rename = "certificate")]
-	#[deprecated]
-	pub __certificate: Option<PathBuf>,
-	#[serde(default, rename = "private_key")]
-	#[deprecated]
-	pub __private_key: Option<PathBuf>,
-	#[serde(default, rename = "auto_ssl")]
-	#[deprecated]
-	pub __auto_ssl: Option<bool>,
-	#[serde(default, rename = "hostname")]
-	#[deprecated]
-	pub __hostname: Option<String>,
-	#[serde(default, rename = "acme_email")]
-	#[deprecated]
-	pub __acme_email: Option<String>,
-	#[serde(default, rename = "congestion_control")]
-	#[deprecated]
-	pub __congestion_control: Option<CongestionController>,
-	#[serde(default, rename = "alpn")]
-	#[deprecated]
-	pub __alpn: Option<Vec<String>>,
-	#[serde(default, rename = "max_idle_time", with = "humantime_serde")]
-	#[deprecated]
-	pub __max_idle_time: Option<Duration>,
-	#[serde(default, rename = "initial_window")]
-	#[deprecated]
-	pub __initial_window: Option<u64>,
-	#[serde(default, rename = "receive_window")]
-	#[deprecated]
-	pub __send_window: Option<u64>,
-	#[serde(default, rename = "send_window")]
-	#[deprecated]
-	pub __receive_window: Option<u32>,
-	#[serde(default, rename = "initial_mtu")]
-	#[deprecated]
-	pub __initial_mtu: Option<u16>,
-	#[serde(default, rename = "min_mtu")]
-	#[deprecated]
-	pub __min_mtu: Option<u16>,
-	#[serde(default, rename = "gso")]
-	#[deprecated]
-	pub __gso: Option<bool>,
-	#[serde(default, rename = "pmtu")]
-	#[deprecated]
-	pub __pmtu: Option<bool>,
-	#[serde(rename = "restful_server")]
-	#[deprecated]
-	pub __restful_server: Option<SocketAddr>,
 }
 
 #[derive(Deserialize, Serialize, Educe)]
@@ -258,17 +206,8 @@ pub struct QuicConfig {
 #[educe(Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct CamouflageConfig {
-	#[educe(Default = false)]
+	#[educe(Default = true)]
 	pub enabled: bool,
-	#[educe(Default(expression = "".to_string()))]
-	pub reverse_proxy_url: String,
-	#[educe(Default = None)]
-	pub reverse_proxy_hostname: Option<String>,
-	#[serde(with = "humantime_serde")]
-	#[educe(Default(expression = Duration::from_secs(10)))]
-	pub request_timeout: Duration,
-	#[educe(Default = false)]
-	pub skip_backend_tls_verify: bool,
 }
 
 /// The `default` rule is mandatory when named rules are present; other named
@@ -399,79 +338,6 @@ fn generate_random_alphanumeric_string(min: usize, max: usize) -> String {
 }
 
 impl Config {
-	pub fn migrate(&mut self) {
-		// Migrate TLS-related fields
-		#[allow(deprecated)]
-		{
-			if let Some(self_sign) = self.__self_sign {
-				self.tls.self_sign = self_sign;
-			}
-			if let Some(certificate) = self.__certificate.take() {
-				self.tls.certificate = certificate;
-			}
-			if let Some(private_key) = self.__private_key.take() {
-				self.tls.private_key = private_key;
-			}
-			if let Some(auto_ssl) = self.__auto_ssl {
-				self.tls.auto_ssl = auto_ssl;
-			}
-			if let Some(hostname) = self.__hostname.take() {
-				self.tls.hostname = hostname;
-			}
-			if let Some(acme_email) = self.__acme_email.take() {
-				self.tls.acme_email = acme_email;
-			}
-			if let Some(alpn) = self.__alpn.take() {
-				self.tls.alpn = alpn;
-			}
-		}
-
-		// Migrate QUIC-related fields
-		#[allow(deprecated)]
-		{
-			if let Some(congestion_control) = self.__congestion_control {
-				self.quic.congestion_control.controller = congestion_control;
-			}
-			if let Some(max_idle_time) = self.__max_idle_time {
-				self.quic.max_idle_time = max_idle_time;
-			}
-			if let Some(initial_window) = self.__initial_window {
-				self.quic.congestion_control.initial_window = initial_window;
-			}
-			if let Some(send_window) = self.__send_window {
-				self.quic.send_window = send_window;
-			}
-			if let Some(receive_window) = self.__receive_window {
-				self.quic.receive_window = receive_window;
-			}
-			if let Some(initial_mtu) = self.__initial_mtu {
-				self.quic.initial_mtu = initial_mtu;
-			}
-			if let Some(min_mtu) = self.__min_mtu {
-				self.quic.min_mtu = min_mtu;
-			}
-			if let Some(gso) = self.__gso {
-				self.quic.gso = gso;
-			}
-			if let Some(pmtu) = self.__pmtu {
-				self.quic.pmtu = pmtu;
-			}
-		}
-
-		// Migrate Restful-related fields
-		#[allow(deprecated)]
-		{
-			if let Some(restful_server) = self.__restful_server {
-				if self.restful.is_none() {
-					self.restful = Some(RestfulConfig::default());
-				}
-				if let Some(ref mut restful) = self.restful {
-					restful.addr = restful_server;
-				}
-			}
-		}
-	}
-
 	pub fn full_example() -> Self {
 		Self {
 			users: {
@@ -809,9 +675,6 @@ pub async fn parse_config(cli: Cli, env_state: EnvState) -> eyre::Result<Config>
 
 	let mut config: Config = figmet.extract()?;
 
-	// Migrate legacy fields to new nested structure
-	config.migrate();
-
 	if config.data_dir.to_str() == Some("") {
 		config.data_dir = std::env::current_dir()?
 	} else if config.data_dir.is_relative() {
@@ -919,13 +782,7 @@ mod tests {
 		assert!(result.tls.auto_ssl);
 		assert_eq!(result.tls.hostname, "testhost");
 		assert_eq!(result.tls.acme_email, "admin@example.com");
-		assert!(result.camouflage.is_some());
-		let camouflage = result.camouflage.as_ref().unwrap();
-		assert!(camouflage.enabled);
-		assert_eq!(camouflage.reverse_proxy_url, "https://127.0.0.1:443");
-		assert_eq!(camouflage.reverse_proxy_hostname.as_deref(), Some("example.com"));
-		assert_eq!(camouflage.request_timeout, Duration::from_secs(15));
-		assert!(camouflage.skip_backend_tls_verify);
+		assert!(result.camouflage.enabled);
 		assert_eq!(result.quic.initial_mtu, 1400);
 		assert_eq!(result.quic.min_mtu, 1300);
 		assert_eq!(result.quic.send_window, 10000000);
@@ -1290,32 +1147,6 @@ mod tests {
 		assert_eq!(result.quic.congestion_control.controller, CongestionController::NewReno);
 	}
 
-	#[tokio::test]
-	async fn test_backward_compatibility_standard_json() {
-		// Test backward compatibility with standard JSON format
-		let json_config = include_str!("../tests/config/backward_compatibility_standard_json.json");
-
-		let result = test_parse_config(json_config, ".json").await;
-		assert!(result.is_ok(), "Standard JSON should be parseable by JSON5");
-	}
-	#[tokio::test]
-	async fn test_legacy_field_migration_json() {
-		// Test legacy field migration with JSON format
-		let config = include_str!("../tests/config/legacy_field_migration_json.json");
-
-		let result = test_parse_config(config, ".json").await.unwrap();
-
-		// Verify migration worked
-		assert!(result.tls.self_sign);
-		assert!(result.tls.certificate.ends_with("cert.pem"));
-		assert!(result.tls.private_key.ends_with("key.pem"));
-		assert_eq!(result.tls.hostname, "example.com");
-		assert_eq!(result.quic.congestion_control.controller, CongestionController::Bbr);
-		assert_eq!(result.quic.max_idle_time, Duration::from_secs(60));
-		assert_eq!(result.quic.initial_mtu, 1500);
-		assert!(result.restful.is_some());
-		assert_eq!(result.restful.unwrap().addr, "0.0.0.0:8080".parse().unwrap());
-	}
 
 	#[tokio::test]
 	async fn test_infer_format_toml_without_extension() {

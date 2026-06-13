@@ -12,10 +12,7 @@ acme_email = "admin@example.com"
 
 [camouflage]
 enabled = true
-reverse_proxy_url = "https://127.0.0.1:443"
-reverse_proxy_hostname = "example.com"
-request_timeout = "15s"
-skip_backend_tls_verify = true
+
 
 [quic]
 initial_mtu = 1400
