@@ -23,6 +23,8 @@ env:
   SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
   CROSS_NO_WARNINGS: "0"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 permissions:
   contents: write
@@ -74,14 +76,4 @@ jobs:
     with:
       cliff-config: '.github/cliff.toml'
 
-  docker:
-    name: Docker
-    needs: [build]
-    uses: rust-proxy/workflows/.github/workflows/docker-publish.yml@v1.0.35
-    with:
-      docker-file: '.github/Dockerfile'
-      image-name: 'tuic-server'
-      platforms: 'linux/amd64,linux/arm64'
-      binary-dir: './docker-bins'
-      server-binary-amd64: 'tuic-server-x86_64-linux-musl'
-      server-binary-arm64: 'tuic-server-aarch64-linux-musl'
+
