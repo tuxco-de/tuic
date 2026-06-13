@@ -1,19 +1,18 @@
 use std::process;
 
 use clap::Parser;
-#[cfg(feature = "jemallocator")]
+#[cfg(all(feature = "jemallocator", not(target_env = "msvc")))]
 use tikv_jemallocator::Jemalloc;
 use tuic_server::{
 	config::{Cli, Control, EnvState, ResolvedRuntime, parse_config},
 	log,
 };
 
-#[cfg(feature = "jemallocator")]
+#[cfg(all(feature = "jemallocator", not(target_env = "msvc")))]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
 fn main() -> eyre::Result<()> {
-
 	#[cfg(feature = "ring")]
 	{
 		_ = rustls::crypto::ring::default_provider().install_default();

@@ -148,7 +148,6 @@ pub struct Config {
 	pub acl: Vec<AclRule>,
 
 	pub experimental: ExperimentalConfig,
-
 }
 
 #[derive(Deserialize, Serialize, Educe)]
@@ -164,10 +163,6 @@ pub struct TlsConfig {
 	pub alpn: Vec<String>,
 	#[educe(Default(expression = "localhost"))]
 	pub hostname: String,
-	#[educe(Default(expression = false))]
-	pub auto_ssl: bool,
-	#[educe(Default(expression = ""))]
-	pub acme_email: String,
 }
 
 #[derive(Deserialize, Serialize, Educe)]
@@ -686,23 +681,17 @@ pub async fn parse_config(cli: Cli, env_state: EnvState) -> eyre::Result<Config>
 
 	// Determine certificate and key paths
 	let base_dir = config.data_dir.clone();
-	config.tls.certificate = if config.tls.auto_ssl && config.tls.certificate.to_str() == Some("") {
-		config.data_dir.join(format!("{}.cer.pem", config.tls.hostname))
-	} else if config.tls.certificate.is_relative() {
+	config.tls.certificate = if config.tls.certificate.is_relative() {
 		config.data_dir.join(&config.tls.certificate)
 	} else {
 		config.tls.certificate.clone()
 	};
 
-	config.tls.private_key = if config.tls.auto_ssl && config.tls.private_key.to_str() == Some("") {
-		config.data_dir.join(format!("{}.key.pem", config.tls.hostname))
-	} else if config.tls.private_key.is_relative() {
+	config.tls.private_key = if config.tls.private_key.is_relative() {
 		base_dir.join(&config.tls.private_key)
 	} else {
 		config.tls.private_key.clone()
 	};
-
-
 
 	// Validate that all ACL rules reference valid outbounds
 	for (i, rule) in config.acl.iter().enumerate() {
@@ -779,9 +768,7 @@ mod tests {
 		assert!(result.zero_rtt_handshake);
 
 		assert!(result.tls.self_sign);
-		assert!(result.tls.auto_ssl);
 		assert_eq!(result.tls.hostname, "testhost");
-		assert_eq!(result.tls.acme_email, "admin@example.com");
 		assert!(result.camouflage.enabled);
 		assert_eq!(result.quic.initial_mtu, 1400);
 		assert_eq!(result.quic.min_mtu, 1300);
@@ -848,29 +835,6 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_auto_ssl_path_generation() {
-		let config = include_str!("../tests/config/auto_ssl_path_generation.toml");
-
-		let result = test_parse_config(config, ".toml").await.unwrap();
-
-		let expected_cert = env::current_dir()
-			.unwrap()
-			.join("__test__ssl_data")
-			.join("example.com.cer.pem");
-
-		let expected_key = env::current_dir()
-			.unwrap()
-			.join("__test__ssl_data")
-			.join("example.com.key.pem");
-
-		assert_eq!(result.tls.certificate, expected_cert);
-		assert_eq!(result.tls.private_key, expected_key);
-
-		// Cleanup test directories
-		let _ = tokio::fs::remove_dir_all("__test__ssl_data").await;
-	}
-
-	#[tokio::test]
 	async fn test_error_handling() {
 		// Test Invalid TOML
 		let config = "invalid toml content";
@@ -898,7 +862,6 @@ mod tests {
 		let cli = result.unwrap();
 		assert!(cli.config.is_none());
 	}
-
 
 	#[tokio::test]
 	async fn test_outbound_no_configuration() {
@@ -1147,7 +1110,6 @@ mod tests {
 		assert_eq!(result.quic.congestion_control.controller, CongestionController::NewReno);
 	}
 
-
 	#[tokio::test]
 	async fn test_infer_format_toml_without_extension() {
 		// Test TOML config without file extension
@@ -1233,7 +1195,6 @@ mod tests {
 		assert_eq!(result.users.len(), 2);
 
 		assert!(result.tls.self_sign);
-		assert!(result.tls.auto_ssl);
 		assert_eq!(result.tls.hostname, "json5.example.com");
 		assert_eq!(result.quic.initial_mtu, 1400);
 		assert_eq!(result.quic.min_mtu, 1300);

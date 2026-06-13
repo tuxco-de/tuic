@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub mod acl;
-pub mod acme;
+
 pub mod camouflage;
 pub mod compat;
 pub mod config;

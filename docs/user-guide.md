@@ -140,7 +140,6 @@ data_dir = "/etc/tuic"
 
 [tls]
 self_sign = false
-auto_ssl = false
 certificate = "cert.pem"
 private_key = "key.pem"
 hostname = "tuic.example.com"
@@ -157,20 +156,6 @@ certificates = ["/etc/tuic/ca.pem"]
 disable_native_certs = false
 ```
 
-### 4.2 内置 ACME
-
-```toml
-data_dir = "/var/lib/tuic"
-
-[tls]
-auto_ssl = true
-self_sign = false
-hostname = "tuic.example.com"
-acme_email = "admin@example.com"
-alpn = ["h3"]
-```
-
-ACME HTTP-01 校验要求服务端可从公网访问 TCP 80。若进程以非 root 用户运行，可通过反向代理转发挑战流量，或为二进制授予低端口绑定能力。ACME 失败时当前实现会回退到临时自签名证书，应检查日志并确认客户端证书验证没有因此失败。
 
 ### 4.3 自签名证书
 
@@ -314,18 +299,11 @@ allow_udp = false
 
 注意：服务端 SOCKS5 出站当前只完整支持 TCP。UDP 默认丢弃；`allow_udp=true` 只允许 UDP 回退直连，并不会经 SOCKS5 传输。
 
-## 7. HTTP/3 伪装
+## 7. 防探测伪装 (Camouflage)
 
-```toml
-[camouflage]
-enabled = true
-reverse_proxy_url = "https://127.0.0.1:8443"
-reverse_proxy_hostname = "www.example.com"
-request_timeout = "10s"
-skip_backend_tls_verify = false
-```
+TUIC 服务端现已默认内置开启防探测伪装。
 
-普通 HTTP/3 流量会被转发到后端，TUIC 流量仍进入代理协议。若 URL 主机是 IP，必须设置 `reverse_proxy_hostname`。该功能要求 TLS ALPN 包含相应的 `h3` 协议。
+当遭遇非 TUIC 协议的握手、探测或无效包时，服务端不会立即断开连接，而是统一返回静态的 HTTP 400 Bad Request 页面。此机制能够在减少被探测工具识别概率的同时，避免引入庞大的 HTTP 反向代理层，从而保持程序的轻量与稳定。不再需要在 `config.toml` 中配置 `[camouflage]` 选项。
 
 ## 8. REST 管理接口
 
@@ -480,7 +458,7 @@ cargo test --workspace
 | SOCKS5 TCP 可用但 UDP 不可用 | 应用是否支持 SOCKS5 UDP、`udp_relay_mode`、本地 UDP 会话超时 |
 | 内网目标被阻止 | ACL 是否显式放行，`drop_private`/`drop_loopback` 是否符合预期 |
 | 大包或高吞吐异常 | MTU、PMTU、GSO、窗口、运营商 UDP 限制 |
-| 伪装后端失败 | URL 必须为绝对 URL；IP 后端必须配置 `reverse_proxy_hostname` |
+| 伪装后端失败 | (内置反代已移除，无此问题，非 TUIC 流量统一返回 400 静态页) |
 | REST 返回 401 | Bearer token 与 `restful.secret` 是否一致 |
 
 提高日志级别：

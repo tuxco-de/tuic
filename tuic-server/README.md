@@ -211,26 +211,6 @@ private_key = ""
 alpn = []
 # Domain name or IP address for certificate issuance or self-sign
 hostname = "localhost"
-# Enable built-in ACME automatic SSL certificate provisioning
-auto_ssl = false
-# (Optional) email for ACME account creation, if left empty, will use 'admin@<hostname>' or 'admin@<random_string>.com'
-acme_email = ""
-
-[camouflage]
-# Enable HTTP/3 camouflage mode for non-TUIC ALPN `h3*` traffic
-enabled = false
-# Reverse proxy target for camouflage requests
-# (usually an HTTP/2 or HTTP/1.1 web server endpoint)
-reverse_proxy_url = "https://127.0.0.1:443"
-# Optional backend server name. When set, it is used as:
-# 1) TLS SNI for backend connection
-# 2) HTTP Host header for backend request routing
-# Required only when reverse_proxy_url host is an IP address.
-reverse_proxy_hostname = "example.com"
-# Per-request timeout for backend proxying
-request_timeout = "10s"
-# Skip TLS verification for backend target (use only for local/self-signed backends)
-skip_backend_tls_verify = false
 
 [restful]
 # Address to bind RESTful API server
@@ -343,25 +323,7 @@ Endpoints:
 
 TLS is required for secure connections.
 
-### Built-in ACME Support
 
-`tuic-server` includes built-in ACME support for automatic SSL certificate provisioning via Let's Encrypt. This allows the server to automatically obtain and renew certificates without external tools.
-
-To enable built-in ACME, set the following options in your configuration:
-
-```toml
-[tls]
-auto_ssl = true
-hostname = "your.domain.com" # The domain name for certificate issuance
-```
-
-**Notes:**
-- The server must be accessible from the public internet on port 80 for ACME HTTP-01 challenge.
-- If running as a non-root user on Linux, you may need to allow binding to privileged ports:
-  ```sh
-  setcap CAP_NET_BIND_SERVICE=+eip <path to tuic-server binary>
-  ```
-- If ACME provisioning fails, tuic-server will fall back to self-signed certificates if configured.
 
 You can also use [acme.sh](https://github.com/acmesh-official/acme.sh) or other tools to manually obtain certificates:
 

@@ -10,7 +10,7 @@ use rustls::{
 	pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
 };
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 use tuic_core::quinn::{
 	Endpoint, EndpointConfig, IdleTimeout, ServerConfig, TokioRuntime, TransportConfig, VarInt,
 	bbr::BbrConfig,
@@ -18,14 +18,7 @@ use tuic_core::quinn::{
 	crypto::rustls::QuicServerConfig,
 };
 
-use crate::{
-	AppContext,
-	acme::{is_valid_domain, start_acme},
-	connection::Connection,
-	error::Error,
-	tls::CertResolver,
-	utils::CongestionController,
-};
+use crate::{AppContext, connection::Connection, error::Error, tls::CertResolver, utils::CongestionController};
 
 pub struct Server {
 	ep: Endpoint,
@@ -40,31 +33,7 @@ impl Server {
 
 	pub async fn init(ctx: Arc<AppContext>) -> Result<Self, Error> {
 		let mut crypto: RustlsServerConfig;
-		let hostname = ctx.cfg.tls.hostname.clone();
-		let acme_email = ctx.cfg.tls.acme_email.clone();
-
-		if ctx.cfg.tls.auto_ssl && is_valid_domain(hostname.as_str()) {
-			warn!("Attempting automatic SSL certificate provisioning for domain: {}", hostname);
-			let cache_dir = ctx.cfg.data_dir.join("acme");
-
-			match start_acme(ctx.clone(), hostname.as_str(), acme_email.as_str(), &cache_dir).await {
-				Ok(resolver) => {
-					info!("ACME certificate management active for {}", hostname);
-					crypto = RustlsServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
-						.with_no_client_auth()
-						.with_cert_resolver(resolver);
-				}
-				Err(e) => {
-					warn!("ACME setup failed: {e}, falling back to self-signed certificate");
-					let cert = rcgen::generate_simple_self_signed(vec![hostname.clone()]).unwrap();
-					let cert_der = CertificateDer::from(cert.cert);
-					let priv_key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
-					crypto = RustlsServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
-						.with_no_client_auth()
-						.with_single_cert(vec![cert_der], PrivateKeyDer::Pkcs8(priv_key))?;
-				}
-			}
-		} else if ctx.cfg.tls.self_sign {
+		if ctx.cfg.tls.self_sign {
 			let cert = rcgen::generate_simple_self_signed(vec![ctx.cfg.tls.hostname.clone()]).unwrap();
 			let cert_der = CertificateDer::from(cert.cert);
 			let priv_key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());

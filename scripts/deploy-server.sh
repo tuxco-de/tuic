@@ -432,6 +432,36 @@ install_manual_certificates() {
 	PRIVATE_KEY="${tls_dir}/private-key.pem"
 }
 
+issue_acme_cert() {
+	local acme_cmd="/root/.acme.sh/acme.sh"
+	if [[ ! -x "$acme_cmd" ]]; then
+		log "installing acme.sh..."
+		if [[ -n "$ACME_EMAIL" ]]; then
+			curl https://get.acme.sh | sh -s email="$ACME_EMAIL"
+		else
+			curl https://get.acme.sh | sh
+		fi
+	fi
+
+	local cert_dir="${CONFIG_DIR}/tls"
+	install -d -m 0750 -o root -g "$SERVICE_NAME" "$cert_dir"
+	
+	log "issuing certificate for $DOMAIN..."
+	"$acme_cmd" --issue -d "$DOMAIN" --standalone --keylength ec-256
+	
+	log "installing certificate for $DOMAIN..."
+	"$acme_cmd" --install-cert -d "$DOMAIN" --ecc \
+		--fullchain-file "${cert_dir}/certificate.pem" \
+		--key-file "${cert_dir}/private-key.pem" \
+		--reloadcmd "systemctl restart $SERVICE_NAME"
+		
+	chown root:"$SERVICE_NAME" "${cert_dir}/certificate.pem" "${cert_dir}/private-key.pem"
+	chmod 0640 "${cert_dir}/certificate.pem" "${cert_dir}/private-key.pem"
+	
+	CERTIFICATE="${cert_dir}/certificate.pem"
+	PRIVATE_KEY="${cert_dir}/private-key.pem"
+}
+
 write_config() {
 	local backup tls_config temp_config
 	if [[ -e "$CONFIG_FILE" && "$FORCE_CONFIG" != "true" ]]; then
@@ -452,11 +482,12 @@ write_config() {
 
 	case "$TLS_MODE" in
 		acme)
+			issue_acme_cert
 			tls_config=$(cat <<EOF
 self_sign = false
-auto_ssl = true
+certificate = "$(toml_escape "$CERTIFICATE")"
+private_key = "$(toml_escape "$PRIVATE_KEY")"
 hostname = "$(toml_escape "$DOMAIN")"
-acme_email = "$(toml_escape "$ACME_EMAIL")"
 alpn = ["h3"]
 EOF
 			)
@@ -464,7 +495,6 @@ EOF
 		self-signed)
 			tls_config=$(cat <<EOF
 self_sign = true
-auto_ssl = false
 hostname = "$(toml_escape "$DOMAIN")"
 alpn = ["h3"]
 EOF
@@ -473,7 +503,6 @@ EOF
 		manual)
 			tls_config=$(cat <<EOF
 self_sign = false
-auto_ssl = false
 certificate = "$(toml_escape "$CERTIFICATE")"
 private_key = "$(toml_escape "$PRIVATE_KEY")"
 hostname = "$(toml_escape "$DOMAIN")"
@@ -657,9 +686,9 @@ main() {
 	create_service_user
 	generate_credentials
 	download_binary
+	configure_firewall
 	write_config
 	write_systemd_service
-	configure_firewall
 	wait_for_service
 	print_result
 }

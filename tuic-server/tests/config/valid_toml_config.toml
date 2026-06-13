@@ -6,9 +6,7 @@ zero_rtt_handshake = true
 
 [tls]
 self_sign = true
-auto_ssl = true
 hostname = "testhost"
-acme_email = "admin@example.com"
 
 [camouflage]
 enabled = true

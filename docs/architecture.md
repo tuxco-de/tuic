@@ -107,7 +107,7 @@ flowchart LR
 
 ### 6.1 启动阶段
 
-1. 解析配置并迁移旧版扁平字段到 `tls`、`quic`、`restful` 等嵌套结构。
+1. 解析配置。
 2. 解析 `data_dir`，将相对证书路径转换为相对于该目录的绝对路径。
 3. 初始化日志、TLS 和 QUIC 传输参数。
 4. 绑定 UDP 监听地址并启动 QUIC Endpoint。
@@ -116,10 +116,9 @@ flowchart LR
 ### 6.2 TLS 与连接分类
 
 - 仅配置 TLS 1.3。
-- `tls.auto_ssl=true` 时尝试 ACME；失败后当前实现会回退到临时自签名证书。
 - `tls.self_sign=true` 时启动时生成自签名证书。
 - 使用证书文件时，每 30 秒检查并热加载证书和私钥变化。
-- 启用伪装后，连接分类器区分 TUIC 事件和普通 HTTP/3 请求；后者转发到配置的 HTTP/HTTPS 后端。
+- 开启防探测伪装：连接分类器区分 TUIC 事件和普通 HTTP/3 请求；对于后者，不再采用反向代理，而是默认直接返回 400 Bad Request 静态错误页面，以避免资源浪费。
 
 ### 6.3 认证与共享状态
 
@@ -138,14 +137,13 @@ flowchart LR
 
 服务端 SOCKS5 出站当前只完整支持 TCP。UDP 选中 SOCKS5 出站时默认丢弃；即使设置 `allow_udp=true`，当前也会直接发送 UDP，而不是经 SOCKS5 转发，以避免文档误导。
 
-## 7. HTTP/3 伪装
+## 7. 防探测伪装 (Camouflage)
 
-伪装功能与 TUIC 共用 QUIC/TLS 监听端口。启用后：
+伪装功能与 TUIC 共用 QUIC/TLS 监听端口且默认启用。启用后：
 
 - TUIC 流量继续进入协议事件循环。
-- 普通 HTTP/3 请求转发到 `camouflage.reverse_proxy_url`。
-- 后端地址为 IP 时必须设置 `reverse_proxy_hostname`，该值同时用于后端 TLS SNI 和 Host 请求头。
-- `skip_backend_tls_verify` 仅应在本地或自签名后端使用。
+- 普通 HTTP/3 请求、探测请求或无效握手包将直接收到静态的 `400 Bad Request` 响应页面并关闭流。
+- （相较于旧版本）移除了代理转发后端的能力，从而移除了 `reqwest` 等重量级依赖，确保服务端极为轻量且不受 SSRF 等攻击干扰。
 
 ## 8. REST 管理接口
 

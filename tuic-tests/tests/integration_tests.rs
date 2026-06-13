@@ -249,8 +249,6 @@ async fn test_server_client_integration() -> eyre::Result<()> {
 			private_key: PathBuf::from("./test_key.pem"),
 			alpn: vec!["h3".to_string()],
 			hostname: "localhost".to_string(),
-			auto_ssl: false,
-			acme_email: "admin@example.com".to_string(),
 		},
 		data_dir: std::env::temp_dir(),
 		quic: tuic_server::config::QuicConfig::default(),
@@ -573,8 +571,6 @@ async fn test_tcp_udp_forward_integration() -> eyre::Result<()> {
 			private_key: PathBuf::from("./test_key.pem"),
 			alpn: vec!["h3".to_string()],
 			hostname: "localhost".to_string(),
-			auto_ssl: false,
-			acme_email: "admin@example.com".to_string(),
 		},
 		data_dir: std::env::temp_dir(),
 		quic: tuic_server::config::QuicConfig::default(),
@@ -796,8 +792,6 @@ async fn test_ipv6_server_client_integration() -> eyre::Result<()> {
 			private_key: PathBuf::from("./test_key_ipv6.pem"),
 			alpn: vec!["h3".to_string()],
 			hostname: "localhost".to_string(),
-			auto_ssl: false,
-			acme_email: "admin@example.com".to_string(),
 		},
 		data_dir: std::env::temp_dir(),
 		restful: None,
@@ -992,7 +986,6 @@ async fn test_ipv6_server_client_integration() -> eyre::Result<()> {
 async fn test_client_proxy_configuration() -> eyre::Result<()> {
 	use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 
-
 	#[cfg(feature = "ring")]
 	let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -1018,8 +1011,6 @@ async fn test_client_proxy_configuration() -> eyre::Result<()> {
 			private_key: PathBuf::from("./test_key.pem"),
 			alpn: vec!["h3".to_string()],
 			hostname: "localhost".to_string(),
-			auto_ssl: false,
-			acme_email: "admin@example.com".to_string(),
 		},
 		data_dir: std::env::temp_dir(),
 		udp_relay_ipv6: true,
@@ -1128,7 +1119,6 @@ async fn test_client_proxy_configuration() -> eyre::Result<()> {
 async fn test_server_port_zero() -> eyre::Result<()> {
 	use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 
-
 	#[cfg(feature = "ring")]
 	let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -1149,8 +1139,6 @@ async fn test_server_port_zero() -> eyre::Result<()> {
 			private_key: PathBuf::from("./test_key.pem"),
 			alpn: vec!["h3".to_string()],
 			hostname: "localhost".to_string(),
-			auto_ssl: false,
-			acme_email: "admin@example.com".to_string(),
 		},
 		data_dir: std::env::temp_dir(),
 		dual_stack: false,
