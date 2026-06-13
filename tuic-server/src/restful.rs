@@ -39,9 +39,12 @@ pub async fn start(ctx: Arc<AppContext>, listener: tokio::net::TcpListener) {
 		.route("/detailed_online", get(list_detailed_online))
 		.route("/traffic", get(list_traffic))
 		.route("/reset_traffic", get(reset_traffic))
-		.with_state(ctx);
+		.with_state(ctx.clone());
 	warn!("RESTful server started, listening on {addr}");
-	if let Err(err) = axum::serve(listener, app).await {
+	if let Err(err) = axum::serve(listener, app)
+		.with_graceful_shutdown(ctx.cancel.clone().cancelled_owned())
+		.await
+	{
 		error!("RESTful server stopped: {err}");
 	}
 }

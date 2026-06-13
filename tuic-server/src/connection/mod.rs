@@ -60,9 +60,10 @@ pub struct Connection {
 	model: Model<side::Server>,
 	auth: Authenticated,
 	auth_lock: Arc<AsyncMutex<()>>,
-	online_registered: Arc<AtomicBool>,
+	admission_reserved: Arc<AtomicBool>,
 	udp_sessions: Cache<u16, Arc<UdpSession>>,
 	udp_session_create_lock: Arc<AsyncMutex<()>>,
+	udp_session_sem: Arc<tokio::sync::Semaphore>,
 	udp_relay_mode: Arc<ArcSwap<Option<UdpRelayMode>>>,
 	pub datagram_sem: Arc<tokio::sync::Semaphore>,
 }
@@ -171,15 +172,19 @@ impl Connection {
 
 	fn new(ctx: Arc<AppContext>, conn: QuinnConnection) -> Self {
 		let max_udp_sessions = ctx.cfg.max_udp_sessions;
+		let udp_session_permits = usize::try_from(max_udp_sessions)
+			.unwrap_or(tokio::sync::Semaphore::MAX_PERMITS)
+			.min(tokio::sync::Semaphore::MAX_PERMITS);
 		Self {
 			ctx,
 			inner: conn.clone(),
 			model: Model::<side::Server>::new(conn),
 			auth: Authenticated::new(),
 			auth_lock: Arc::new(AsyncMutex::new(())),
-			online_registered: Arc::new(AtomicBool::new(false)),
+			admission_reserved: Arc::new(AtomicBool::new(false)),
 			udp_sessions: Cache::new(max_udp_sessions),
 			udp_session_create_lock: Arc::new(AsyncMutex::new(())),
+			udp_session_sem: Arc::new(tokio::sync::Semaphore::new(udp_session_permits)),
 			udp_relay_mode: Arc::new(ArcSwap::new(None.into())),
 			datagram_sem: Arc::new(tokio::sync::Semaphore::new(1024)),
 		}
@@ -200,8 +205,7 @@ impl Connection {
 				return Err(Error::MaximumClientsReached(auth.uuid()));
 			}
 			self.auth.set(auth.uuid());
-			self.online_registered
-				.store(self.ctx.cfg.restful.is_some(), Ordering::Release);
+			self.admission_reserved.store(true, Ordering::Release);
 			Span::current().record("user", auth.uuid().to_string());
 			Ok(())
 		} else {
@@ -221,19 +225,21 @@ impl Connection {
 
 	async fn collect_garbage(self) {
 		loop {
-			time::sleep(self.ctx.cfg.gc_interval).await;
-
-			if self.is_closed() {
-				if self.online_registered.swap(false, Ordering::AcqRel)
-					&& let Some(uuid) = self.auth.get()
-				{
-					restful::client_disconnect(&self.ctx, &uuid, self.inner).await;
+			tokio::select! {
+				_ = self.inner.closed() => {
+					let _auth_guard = self.auth_lock.lock().await;
+					if self.admission_reserved.swap(false, Ordering::AcqRel)
+						&& let Some(uuid) = self.auth.get()
+					{
+						restful::client_disconnect(&self.ctx, &uuid, self.inner).await;
+					}
+					break;
 				}
-				break;
+				_ = time::sleep(self.ctx.cfg.gc_interval) => {
+					debug!("packet fragment garbage collecting event");
+					self.model.collect_garbage(self.ctx.cfg.gc_lifetime);
+				}
 			}
-
-			debug!("packet fragment garbage collecting event");
-			self.model.collect_garbage(self.ctx.cfg.gc_lifetime);
 		}
 	}
 

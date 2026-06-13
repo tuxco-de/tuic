@@ -9,7 +9,7 @@ use moka::future::Cache;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tokio::{
 	net::UdpSocket,
-	sync::{RwLock as AsyncRwLock, oneshot},
+	sync::{OwnedSemaphorePermit, RwLock as AsyncRwLock, oneshot},
 };
 use tracing::{Instrument, Span, warn};
 use tuic_core::Address;
@@ -24,6 +24,7 @@ pub struct UdpSession {
 	socket_v4: UdpSocket,
 	socket_v6: Option<UdpSocket>,
 	close: AsyncRwLock<Option<oneshot::Sender<()>>>,
+	_permit: OwnedSemaphorePermit,
 }
 
 impl UdpSession {
@@ -37,6 +38,7 @@ impl UdpSession {
 		conn: Connection,
 		assoc_id: u16,
 		udp_sessions: Cache<u16, Arc<UdpSession>>,
+		permit: OwnedSemaphorePermit,
 	) -> Result<Arc<Self>, Error> {
 		let socket_v4 = {
 			let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
@@ -84,6 +86,7 @@ impl UdpSession {
 			socket_v4,
 			socket_v6,
 			close: AsyncRwLock::new(Some(tx)),
+			_permit: permit,
 		});
 
 		let session_listening = session.clone();

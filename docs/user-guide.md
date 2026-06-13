@@ -311,6 +311,8 @@ TUIC 服务端现已默认内置开启防探测伪装。
 [restful]
 addr = "127.0.0.1:8443"
 secret = "replace-with-a-long-random-secret"
+
+[admission]
 maximum_clients_per_user = 0
 ```
 

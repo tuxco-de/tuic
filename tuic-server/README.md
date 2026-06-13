@@ -217,6 +217,8 @@ hostname = "localhost"
 addr = "127.0.0.1:8443"
 # Bearer token for API authentication
 secret = "YOUR_SECRET_HERE"
+
+[admission]
 # Limit for simultaneous clients per user UUID (0 = unlimited)
 maximum_clients_per_user = 0
 

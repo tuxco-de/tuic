@@ -31,6 +31,13 @@ impl Server {
 		self.ep.local_addr()
 	}
 
+	pub fn restful_addr(&self) -> std::io::Result<Option<SocketAddr>> {
+		self.restful_listener
+			.as_ref()
+			.map(tokio::net::TcpListener::local_addr)
+			.transpose()
+	}
+
 	pub async fn init(ctx: Arc<AppContext>) -> Result<Self, Error> {
 		let mut crypto: RustlsServerConfig;
 		if ctx.cfg.tls.self_sign {
@@ -132,15 +139,16 @@ impl Server {
 
 	pub async fn start(self) {
 		warn!("server started, listening on {}", self.ep.local_addr().unwrap());
-		if let Some(listener) = self.restful_listener {
-			tokio::spawn(crate::restful::start(self.ctx.clone(), listener));
-		}
+		let restful_handle = self
+			.restful_listener
+			.map(|listener| tokio::spawn(crate::restful::start(self.ctx.clone(), listener)));
 
 		loop {
 			tokio::select! {
 				_ = self.ctx.cancel.cancelled() => {
 					tracing::info!("Server cancellation requested");
-					return;
+					self.ep.close(VarInt::from_u32(0), b"server shutdown");
+					break;
 				}
 				accept_res = self.ep.accept() => match accept_res {
 					Some(conn) => match conn.accept() {
@@ -153,10 +161,15 @@ impl Server {
 					},
 					None => {
 						debug!("[Incoming] the endpoint is closed");
-						return;
+						self.ctx.cancel.cancel();
+						break;
 					}
 				}
 			}
+		}
+
+		if let Some(handle) = restful_handle {
+			let _ = handle.await;
 		}
 	}
 }

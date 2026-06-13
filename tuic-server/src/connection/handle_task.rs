@@ -340,7 +340,7 @@ impl Connection {
 				Address::DomainAddress(d, _) => Some(d.as_str()),
 				_ => None,
 			};
-			let (outbound_name, hijack, should_drop, _) =
+			let (outbound_name, hijack, should_drop, matched_addrs) =
 				self.decide_acl_for_addrs(&initial_addrs, addr.port(), false, domain).await;
 			if should_drop {
 				// Silently drop the packet as per ACL
@@ -378,7 +378,7 @@ impl Connection {
 			let mut socket_addrs = if let Some(h) = hijack {
 				vec![SocketAddr::new(h, addr.port())]
 			} else {
-				initial_addrs
+				matched_addrs
 			};
 			self.filter_addresses(&mut socket_addrs, outbound)?;
 			let socket_addr = socket_addrs[0];
@@ -390,10 +390,12 @@ impl Connection {
 				if let Some(session) = self.udp_sessions.get(&assoc_id).await {
 					session
 				} else {
-					if self.udp_sessions.entry_count() >= self.ctx.cfg.max_udp_sessions {
-						return Err(eyre!("maximum UDP session limit reached").into());
-					}
-					let session = UdpSession::new(self.ctx.clone(), self.clone(), assoc_id, self.udp_sessions.clone())?;
+					let permit = self
+						.udp_session_sem
+						.clone()
+						.try_acquire_owned()
+						.map_err(|_| eyre!("maximum UDP session limit reached"))?;
+					let session = UdpSession::new(self.ctx.clone(), self.clone(), assoc_id, self.udp_sessions.clone(), permit)?;
 					self.udp_sessions.insert(assoc_id, session.clone()).await;
 					session
 				}

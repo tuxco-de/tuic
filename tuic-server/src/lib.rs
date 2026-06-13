@@ -36,6 +36,7 @@ pub struct AppContext {
 
 pub struct ServerGuard {
 	pub local_addr: std::net::SocketAddr,
+	pub restful_addr: Option<std::net::SocketAddr>,
 	pub cancel: CancellationToken,
 	pub handle: tokio::task::JoinHandle<()>,
 }
@@ -63,12 +64,14 @@ pub async fn run(cfg: Config) -> eyre::Result<ServerGuard> {
 	});
 	let server = server::Server::init(ctx.clone()).await?;
 	let local_addr = server.local_addr()?;
+	let restful_addr = server.restful_addr()?;
 	let cancel = ctx.cancel.clone();
 	let handle = tokio::spawn(async move {
 		server.start().await;
 	});
 	Ok(ServerGuard {
 		local_addr,
+		restful_addr,
 		cancel,
 		handle,
 	})

@@ -186,7 +186,14 @@ pub mod side {
 struct UdpSessions<B> {
 	sessions: HashMap<u16, UdpSession<B>>,
 	task_associate_count: Counter,
+	pending_fragment_slots: usize,
+	pending_fragment_bytes: usize,
 }
+
+const MAX_UDP_SESSIONS: usize = 8192;
+const MAX_PENDING_PACKETS_PER_SESSION: usize = 256;
+const MAX_PENDING_FRAGMENT_SLOTS: usize = 16 * 1024;
+const MAX_PENDING_FRAGMENT_BYTES: usize = 16 * 1024 * 1024;
 
 impl<B> UdpSessions<B>
 where
@@ -196,6 +203,8 @@ where
 		Self {
 			sessions: HashMap::new(),
 			task_associate_count,
+			pending_fragment_slots: 0,
+			pending_fragment_bytes: 0,
 		}
 	}
 
@@ -233,7 +242,7 @@ where
 		size: u16,
 		addr: Address,
 	) -> Option<Packet<side::Rx, B>> {
-		if !self.sessions.contains_key(&assoc_id) && self.sessions.len() >= 8192 {
+		if !self.sessions.contains_key(&assoc_id) && self.sessions.len() >= MAX_UDP_SESSIONS {
 			return None;
 		}
 
@@ -246,12 +255,12 @@ where
 	}
 
 	fn send_dissociate(&mut self, assoc_id: u16) -> Dissociate<side::Tx> {
-		self.sessions.remove(&assoc_id);
+		self.remove_session(assoc_id);
 		Dissociate::<side::Tx>::new(assoc_id)
 	}
 
 	fn recv_dissociate(&mut self, assoc_id: u16) -> Dissociate<side::Rx> {
-		self.sessions.remove(&assoc_id);
+		self.remove_session(assoc_id);
 		Dissociate::<side::Rx>::new(assoc_id)
 	}
 
@@ -266,19 +275,61 @@ where
 		addr: Address,
 		data: B,
 	) -> Result<Option<Assemblable<B>>, AssembleError> {
-		self.sessions
+		PacketBuffer::<B>::validate_fragment(frag_total, frag_id, &addr)?;
+
+		let data_len = data.as_ref().len();
+		let session = self
+			.sessions
 			.entry(assoc_id)
-			.or_insert_with(|| UdpSession::new(self.task_associate_count.reg()))
-			.insert(assoc_id, pkt_id, frag_total, frag_id, size, addr, data)
+			.or_insert_with(|| UdpSession::new(self.task_associate_count.reg()));
+		let existing = session.pkt_buf.get(&pkt_id);
+		let is_new = existing.is_none();
+		let existing_bytes = existing.map_or(0, |buf| buf.buffered_bytes);
+		let existing_slots = existing.map_or(0, |buf| buf.frag_total as usize);
+
+		if is_new && session.pkt_buf.len() >= MAX_PENDING_PACKETS_PER_SESSION {
+			return Err(AssembleError::PendingPacketLimit(MAX_PENDING_PACKETS_PER_SESSION));
+		}
+		if is_new && self.pending_fragment_slots.saturating_add(frag_total as usize) > MAX_PENDING_FRAGMENT_SLOTS {
+			return Err(AssembleError::FragmentSlotLimit(MAX_PENDING_FRAGMENT_SLOTS));
+		}
+		if self.pending_fragment_bytes.saturating_add(data_len) > MAX_PENDING_FRAGMENT_BYTES {
+			return Err(AssembleError::FragmentByteLimit(MAX_PENDING_FRAGMENT_BYTES));
+		}
+
+		let result = session.insert(assoc_id, pkt_id, frag_total, frag_id, size, addr, data)?;
+		if result.is_some() {
+			if !is_new {
+				self.pending_fragment_slots = self.pending_fragment_slots.saturating_sub(existing_slots);
+				self.pending_fragment_bytes = self.pending_fragment_bytes.saturating_sub(existing_bytes);
+			}
+		} else {
+			if is_new {
+				self.pending_fragment_slots += frag_total as usize;
+			}
+			self.pending_fragment_bytes += data_len;
+		}
+
+		Ok(result)
 	}
 
 	fn collect_garbage(&mut self, timeout: Duration) {
 		for session in self.sessions.values_mut() {
-			session.collect_garbage(timeout);
+			let (slots, bytes) = session.collect_garbage(timeout);
+			self.pending_fragment_slots = self.pending_fragment_slots.saturating_sub(slots);
+			self.pending_fragment_bytes = self.pending_fragment_bytes.saturating_sub(bytes);
 		}
 		// Remove sessions that are empty and have been idle past the timeout.
 		// This prevents unbounded accumulation of stale UDP sessions.
 		self.sessions.retain(|_, session| !session.is_idle(timeout));
+	}
+
+	fn remove_session(&mut self, assoc_id: u16) {
+		if let Some(session) = self.sessions.remove(&assoc_id) {
+			let (slots, bytes) = session.pending_usage();
+			self.pending_fragment_slots = self.pending_fragment_slots.saturating_sub(slots);
+			self.pending_fragment_bytes = self.pending_fragment_bytes.saturating_sub(bytes);
+		}
 	}
 }
 
@@ -356,8 +407,24 @@ where
 		Ok(res)
 	}
 
-	fn collect_garbage(&mut self, timeout: Duration) {
-		self.pkt_buf.retain(|_, buf| buf.c_time.elapsed() < timeout);
+	fn collect_garbage(&mut self, timeout: Duration) -> (usize, usize) {
+		let mut removed_slots = 0;
+		let mut removed_bytes = 0;
+		self.pkt_buf.retain(|_, buf| {
+			let keep = buf.c_time.elapsed() < timeout;
+			if !keep {
+				removed_slots += buf.frag_total as usize;
+				removed_bytes += buf.buffered_bytes;
+			}
+			keep
+		});
+		(removed_slots, removed_bytes)
+	}
+
+	fn pending_usage(&self) -> (usize, usize) {
+		self.pkt_buf.values().fold((0, 0), |(slots, bytes), buf| {
+			(slots + buf.frag_total as usize, bytes + buf.buffered_bytes)
+		})
 	}
 
 	fn is_idle(&self, timeout: Duration) -> bool {
@@ -384,6 +451,7 @@ struct PacketBuffer<B> {
 	frag_received: u8,
 	addr: Address,
 	c_time: Instant,
+	buffered_bytes: usize,
 }
 
 impl<B> PacketBuffer<B>
@@ -400,7 +468,21 @@ where
 			frag_received: 0,
 			addr: Address::None,
 			c_time: Instant::now(),
+			buffered_bytes: 0,
 		}
+	}
+
+	fn validate_fragment(frag_total: u8, frag_id: u8, addr: &Address) -> Result<(), AssembleError> {
+		if frag_id >= frag_total {
+			return Err(AssembleError::InvalidFragmentId(frag_total, frag_id));
+		}
+		if frag_id == 0 && addr.is_none() {
+			return Err(AssembleError::InvalidAddress("no address in first fragment"));
+		}
+		if frag_id != 0 && !addr.is_none() {
+			return Err(AssembleError::InvalidAddress("address in non-first fragment"));
+		}
+		Ok(())
 	}
 
 	fn insert(
@@ -414,16 +496,9 @@ where
 	) -> Result<Option<Assemblable<B>>, AssembleError> {
 		assert_eq!(data.as_ref().len(), size as usize);
 
-		if frag_id >= frag_total {
-			return Err(AssembleError::InvalidFragmentId(frag_total, frag_id));
-		}
-
-		if frag_id == 0 && addr.is_none() {
-			return Err(AssembleError::InvalidAddress("no address in first fragment"));
-		}
-
-		if frag_id != 0 && !addr.is_none() {
-			return Err(AssembleError::InvalidAddress("address in non-first fragment"));
+		Self::validate_fragment(frag_total, frag_id, &addr)?;
+		if frag_total != self.frag_total {
+			return Err(AssembleError::InconsistentFragmentTotal(self.frag_total, frag_total));
 		}
 
 		if self.buf[frag_id as usize].is_some() {
@@ -432,6 +507,7 @@ where
 
 		self.buf[frag_id as usize] = Some(data);
 		self.frag_received += 1;
+		self.buffered_bytes += size as usize;
 
 		if frag_id == 0 {
 			self.addr = addr;
@@ -500,4 +576,12 @@ pub enum AssembleError {
 	InvalidAddress(&'static str),
 	#[error("duplicated fragment: {0}")]
 	DuplicatedFragment(u8),
+	#[error("inconsistent fragment total: expected {0}, got {1}")]
+	InconsistentFragmentTotal(u8, u8),
+	#[error("too many pending packets in one UDP session (limit: {0})")]
+	PendingPacketLimit(usize),
+	#[error("too many pending fragment slots in one connection (limit: {0})")]
+	FragmentSlotLimit(usize),
+	#[error("too many buffered fragment bytes in one connection (limit: {0})")]
+	FragmentByteLimit(usize),
 }

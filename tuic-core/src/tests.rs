@@ -695,6 +695,24 @@ mod model_tests {
 	}
 
 	#[test]
+	fn test_packet_assembly_rejects_inconsistent_fragment_total() {
+		let conn = Connection::<Vec<u8>>::new();
+		let first = crate::Packet::new(1, 0, 2, 0, 1, Address::DomainAddress("test.com".to_string(), 53));
+		conn.recv_packet_unrestricted(first).unwrap().assemble(vec![1]).unwrap();
+
+		let inconsistent = crate::Packet::new(1, 0, u8::MAX, u8::MAX - 1, 1, Address::None);
+		let err = conn
+			.recv_packet_unrestricted(inconsistent)
+			.unwrap()
+			.assemble(vec![2])
+			.unwrap_err();
+		assert!(matches!(
+			err,
+			crate::model::AssembleError::InconsistentFragmentTotal(2, u8::MAX)
+		));
+	}
+
+	#[test]
 	fn test_packet_assembly_first_frag_no_address() {
 		let conn = Connection::<Vec<u8>>::new();
 
@@ -773,6 +791,37 @@ mod model_tests {
 		conn.collect_garbage(Duration::from_millis(1));
 		let header_stale = crate::Packet::new(1, 2, 1, 0, 3, Address::DomainAddress("stale.com".to_string(), 80));
 		assert!(conn.recv_packet(header_stale).is_none());
+	}
+
+	#[test]
+	fn test_pending_packet_limit_is_released_by_gc() {
+		let conn = Connection::<Vec<u8>>::new();
+
+		for pkt_id in 0..256 {
+			let header = crate::Packet::new(1, pkt_id, 2, 0, 1, Address::DomainAddress("test.com".to_string(), 53));
+			let pkt = conn.recv_packet_unrestricted(header).unwrap();
+			assert!(pkt.assemble(vec![0]).unwrap().is_none());
+		}
+
+		let overflow = crate::Packet::new(1, 256, 2, 0, 1, Address::DomainAddress("test.com".to_string(), 53));
+		let err = conn
+			.recv_packet_unrestricted(overflow)
+			.unwrap()
+			.assemble(vec![0])
+			.unwrap_err();
+		assert!(matches!(err, crate::model::AssembleError::PendingPacketLimit(256)));
+
+		std::thread::sleep(Duration::from_millis(2));
+		conn.collect_garbage(Duration::from_nanos(1));
+
+		let after_gc = crate::Packet::new(1, 256, 2, 0, 1, Address::DomainAddress("test.com".to_string(), 53));
+		assert!(
+			conn.recv_packet_unrestricted(after_gc)
+				.unwrap()
+				.assemble(vec![0])
+				.unwrap()
+				.is_none()
+		);
 	}
 
 	#[test]

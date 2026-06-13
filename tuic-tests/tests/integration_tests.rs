@@ -1161,5 +1161,49 @@ async fn test_server_port_zero() -> eyre::Result<()> {
 	info!("Server bound to: {}", guard.local_addr);
 
 	guard.cancel.cancel();
+	guard.handle.await?;
+	Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial]
+async fn test_server_shutdown_releases_quic_and_restful_ports() -> eyre::Result<()> {
+	use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
+
+	#[cfg(feature = "ring")]
+	let _ = rustls::crypto::ring::default_provider().install_default();
+
+	let server_config = tuic_server::Config {
+		server: "127.0.0.1:0".parse::<SocketAddr>()?,
+		users: {
+			let mut users = HashMap::new();
+			users.insert(Uuid::nil(), "test_password".to_string());
+			users
+		},
+		tls: tuic_server::config::TlsConfig {
+			self_sign: true,
+			certificate: PathBuf::new(),
+			private_key: PathBuf::new(),
+			alpn: vec!["h3".to_string()],
+			hostname: "localhost".to_string(),
+		},
+		restful: Some(tuic_server::config::RestfulConfig {
+			addr: "127.0.0.1:0".parse()?,
+			secret: "test-secret".to_string(),
+		}),
+		dual_stack: false,
+		..Default::default()
+	};
+
+	let guard = tuic_server::run(server_config).await?;
+	let quic_addr = guard.local_addr;
+	let restful_addr = guard.restful_addr.expect("REST listener should be bound");
+
+	guard.cancel.cancel();
+	guard.handle.await?;
+
+	let quic_socket = tokio::net::UdpSocket::bind(quic_addr).await?;
+	let restful_listener = tokio::net::TcpListener::bind(restful_addr).await?;
+	drop((quic_socket, restful_listener));
 	Ok(())
 }

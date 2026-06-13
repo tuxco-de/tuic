@@ -718,6 +718,13 @@ pub async fn parse_config(cli: Cli, env_state: EnvState) -> eyre::Result<Config>
 		}
 	}
 
+	if config.max_udp_sessions > tokio::sync::Semaphore::MAX_PERMITS as u64 {
+		return Err(eyre::eyre!(
+			"max_udp_sessions exceeds the supported limit of {}",
+			tokio::sync::Semaphore::MAX_PERMITS
+		));
+	}
+
 	Ok(config)
 }
 
