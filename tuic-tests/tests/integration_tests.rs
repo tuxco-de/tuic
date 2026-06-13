@@ -219,8 +219,7 @@ fn test_various_domain_names() {
 #[cfg_attr(not(any(target_arch = "x86", target_arch = "x86_64")), ignore)]
 async fn test_server_client_integration() -> eyre::Result<()> {
 	use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
-	#[cfg(feature = "aws-lc-rs")]
-	let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
 	#[cfg(feature = "ring")]
 	let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -530,8 +529,7 @@ async fn test_server_client_integration() -> eyre::Result<()> {
 #[cfg_attr(not(any(target_arch = "x86", target_arch = "x86_64")), ignore)]
 async fn test_tcp_udp_forward_integration() -> eyre::Result<()> {
 	use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
-	#[cfg(feature = "aws-lc-rs")]
-	let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
 	#[cfg(feature = "ring")]
 	let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -772,8 +770,7 @@ async fn test_tcp_udp_forward_integration() -> eyre::Result<()> {
 #[cfg_attr(not(any(target_arch = "x86", target_arch = "x86_64")), ignore)]
 async fn test_ipv6_server_client_integration() -> eyre::Result<()> {
 	use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
-	#[cfg(feature = "aws-lc-rs")]
-	let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
 	#[cfg(feature = "ring")]
 	let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -995,8 +992,7 @@ async fn test_ipv6_server_client_integration() -> eyre::Result<()> {
 async fn test_client_proxy_configuration() -> eyre::Result<()> {
 	use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 
-	#[cfg(feature = "aws-lc-rs")]
-	let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
 	#[cfg(feature = "ring")]
 	let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -1132,8 +1128,7 @@ async fn test_client_proxy_configuration() -> eyre::Result<()> {
 async fn test_server_port_zero() -> eyre::Result<()> {
 	use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 
-	#[cfg(feature = "aws-lc-rs")]
-	let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
 	#[cfg(feature = "ring")]
 	let _ = rustls::crypto::ring::default_provider().install_default();
 

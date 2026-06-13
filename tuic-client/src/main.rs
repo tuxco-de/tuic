@@ -12,10 +12,6 @@ use tuic_client::config::{Cli, Config, EnvState, ResolvedRuntime};
 static GLOBAL: Jemalloc = Jemalloc;
 
 fn main() -> eyre::Result<()> {
-	#[cfg(feature = "aws-lc-rs")]
-	{
-		_ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-	}
 
 	#[cfg(feature = "ring")]
 	{

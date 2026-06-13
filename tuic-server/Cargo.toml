@@ -12,9 +12,8 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["aws-lc-rs"]
+default = ["ring"]
 ring = ["tuic-core/ring", "rustls/ring", "rcgen/ring", "rustls-acme/ring"]
-aws-lc-rs = ["tuic-core/aws-lc-rs", "dep:aws-lc-rs", "rustls/aws-lc-rs", "rcgen/aws_lc_rs", "rustls-acme/aws-lc-rs"]
 jemallocator = ["tikv-jemallocator"]
 
 [dependencies]
@@ -44,7 +43,7 @@ rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem
 rustls-acme = { git = "https://github.com/rust-proxy/rustls-acme", branch = "feat/ip", default-features = false, features = ["tower", "webpki-roots"] }
 tokio-stream = "0.1"
 x509-parser = "0.18"
-aws-lc-rs = { version = "1", default-features = false, optional = true, features = ["prebuilt-nasm"] }
+
 
 # Serde
 bytes = { version = "1", default-features = false, features = ["std"] }

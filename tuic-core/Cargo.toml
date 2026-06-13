@@ -16,7 +16,6 @@ async_marshal = ["futures-util"]
 marshal = []
 model = ["parking_lot", "register-count"]
 ring = ["rustls/ring", "tokio-rustls/ring", "quinn/rustls-ring"]
-aws-lc-rs = ["rustls/aws-lc-rs", "tokio-rustls/aws-lc-rs", "quinn/rustls-aws-lc-rs"]
 
 [dependencies]
 # From tuic

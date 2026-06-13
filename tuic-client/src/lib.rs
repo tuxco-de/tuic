@@ -173,8 +173,6 @@ mod tests {
 	use crate::config::TcpForward;
 
 	fn install_crypto() {
-		#[cfg(feature = "aws-lc-rs")]
-		let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
 		#[cfg(feature = "ring")]
 		let _ = rustls::crypto::ring::default_provider().install_default();

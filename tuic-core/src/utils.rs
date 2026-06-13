@@ -559,8 +559,6 @@ mod tests {
 		// Install default crypto provider
 		#[cfg(feature = "ring")]
 		let _ = rustls::crypto::ring::default_provider().install_default();
-		#[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
-		let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
 		// Generate self-signed certificate for test domain
 		let cert_params = CertificateParams::new(vec![test_hostname.to_string()]).unwrap();
