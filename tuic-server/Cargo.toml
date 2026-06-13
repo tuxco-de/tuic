@@ -82,7 +82,7 @@ smallvec = { version = "1", default-features = false }
 
 rand = "0.10"
 
-[target.'cfg(not(target_env = "msvc"))'.dependencies]
+[target."cfg(not(target_env = \"msvc\"))".dependencies]
 tikv-jemallocator = { version = "0.7", optional = true }
 
 [dev-dependencies]
