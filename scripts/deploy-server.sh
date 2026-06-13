@@ -101,6 +101,7 @@ load_environment() {
 	TUIC_UUID="${TUIC_UUID:-$TUIC_UUID}"
 	TUIC_PASSWORD="${TUIC_PASSWORD:-$TUIC_PASSWORD}"
 	VERSION="${TUIC_VERSION:-$VERSION}"
+	ACME_PORT="${TUIC_ACME_PORT:-$ACME_PORT}"
 	OPEN_FIREWALL="$(parse_bool "${TUIC_OPEN_FIREWALL:-$OPEN_FIREWALL}")"
 	FORCE_CONFIG="$(parse_bool "${TUIC_FORCE_CONFIG:-$FORCE_CONFIG}")"
 }
@@ -112,6 +113,7 @@ parse_arguments() {
 			--port) PORT="${2:?missing value for --port}"; shift 2 ;;
 			--tls) TLS_MODE="${2:?missing value for --tls}"; shift 2 ;;
 			--email) ACME_EMAIL="${2:?missing value for --email}"; shift 2 ;;
+			--acme-port) ACME_PORT="${2:?missing value for --acme-port}"; shift 2 ;;
 			--certificate) CERTIFICATE="${2:?missing value for --certificate}"; shift 2 ;;
 			--private-key) PRIVATE_KEY="${2:?missing value for --private-key}"; shift 2 ;;
 			--uuid) TUIC_UUID="${2:?missing value for --uuid}"; shift 2 ;;
@@ -273,6 +275,7 @@ EOF
 			acme)
 				prompt_value DOMAIN "证书域名" "$DOMAIN" true
 				prompt_value ACME_EMAIL "ACME 邮箱（可留空）" "$ACME_EMAIL" false
+				prompt_value ACME_PORT "ACME 监听端口 (默认 80, 输入 443 则使用 ALPN 模式)" "${ACME_PORT:-80}" false
 				;;
 			self-signed)
 				prompt_value DOMAIN "证书主机名或服务器 IP" "${DOMAIN:-localhost}" true
@@ -321,6 +324,9 @@ validate_inputs() {
 	case "$TLS_MODE" in
 		acme)
 			[[ -n "$DOMAIN" ]] || fail "--domain is required for ACME mode"
+			ACME_PORT="${ACME_PORT:-80}"
+			[[ "$ACME_PORT" =~ ^[0-9]+$ ]] || fail "acme-port must be numeric"
+			(( ACME_PORT >= 1 && ACME_PORT <= 65535 )) || fail "acme-port must be between 1 and 65535"
 			;;
 		self-signed)
 			DOMAIN="${DOMAIN:-localhost}"
@@ -434,20 +440,73 @@ install_manual_certificates() {
 
 issue_acme_cert() {
 	local acme_cmd="/root/.acme.sh/acme.sh"
+	
+	# Check dependencies
+	if ! command -v cron >/dev/null 2>&1 && ! command -v crond >/dev/null 2>&1 && ! systemctl is-active --quiet cron && ! systemctl is-active --quiet crond; then
+		log "cron daemon not found, which is required by acme.sh for auto-renewal."
+		if prompt_yes_no "未检测到 cron 守护进程，acme.sh 自动续期将无法工作。是否尝试自动安装 cron？" "true"; then
+			if command -v apt-get >/dev/null 2>&1; then
+				apt-get update && apt-get install -y cron
+				systemctl enable --now cron
+			elif command -v dnf >/dev/null 2>&1; then
+				dnf install -y cronie
+				systemctl enable --now crond
+			elif command -v yum >/dev/null 2>&1; then
+				yum install -y cronie
+				systemctl enable --now crond
+			elif command -v pacman >/dev/null 2>&1; then
+				pacman -Sy --noconfirm cronie
+				systemctl enable --now cronie
+			elif command -v apk >/dev/null 2>&1; then
+				apk add cronie
+				rc-update add crond
+				rc-service crond start
+			else
+				fail "不支持的包管理器，请手动安装 cron"
+			fi
+		fi
+	fi
+	
+	if ! command -v socat >/dev/null 2>&1; then
+		log "socat not found, which is required by acme.sh standalone mode."
+		if prompt_yes_no "acme.sh standalone 模式需要 socat。是否尝试自动安装 socat？" "true"; then
+			if command -v apt-get >/dev/null 2>&1; then
+				apt-get update && apt-get install -y socat
+			elif command -v dnf >/dev/null 2>&1; then
+				dnf install -y socat
+			elif command -v yum >/dev/null 2>&1; then
+				yum install -y socat
+			elif command -v pacman >/dev/null 2>&1; then
+				pacman -Sy --noconfirm socat
+			elif command -v apk >/dev/null 2>&1; then
+				apk add socat
+			else
+				fail "不支持的包管理器，请手动安装 socat"
+			fi
+		fi
+	fi
+
 	if [[ ! -x "$acme_cmd" ]]; then
 		log "installing acme.sh..."
-		if [[ -n "$ACME_EMAIL" ]]; then
-			curl https://get.acme.sh | sh -s email="$ACME_EMAIL"
-		else
-			curl https://get.acme.sh | sh
-		fi
+		curl https://get.acme.sh | sh
+	fi
+
+	if [[ -n "$ACME_EMAIL" ]]; then
+		log "registering account with email $ACME_EMAIL..."
+		"$acme_cmd" --register-account -m "$ACME_EMAIL"
 	fi
 
 	local cert_dir="${CONFIG_DIR}/tls"
 	install -d -m 0750 -o root -g "$SERVICE_NAME" "$cert_dir"
 	
 	log "issuing certificate for $DOMAIN..."
-	"$acme_cmd" --issue -d "$DOMAIN" --standalone --keylength ec-256
+	local issue_args=("--issue" "-d" "$DOMAIN" "--standalone" "--keylength" "ec-256")
+	if [[ "$ACME_PORT" == "443" ]]; then
+		issue_args+=("--alpn")
+	elif [[ "$ACME_PORT" != "80" ]]; then
+		issue_args+=("--httpport" "$ACME_PORT")
+	fi
+	"$acme_cmd" "${issue_args[@]}"
 	
 	log "installing certificate for $DOMAIN..."
 	"$acme_cmd" --install-cert -d "$DOMAIN" --ecc \
@@ -594,10 +653,10 @@ configure_firewall() {
 	[[ "$OPEN_FIREWALL" == "true" ]] || return
 	if command -v ufw >/dev/null 2>&1; then
 		ufw allow "${PORT}/udp"
-		[[ "$TLS_MODE" != "acme" ]] || ufw allow "80/tcp"
+		[[ "$TLS_MODE" != "acme" ]] || ufw allow "${ACME_PORT:-80}/tcp"
 	elif command -v firewall-cmd >/dev/null 2>&1; then
 		firewall-cmd --permanent --add-port="${PORT}/udp"
-		[[ "$TLS_MODE" != "acme" ]] || firewall-cmd --permanent --add-port="80/tcp"
+		[[ "$TLS_MODE" != "acme" ]] || firewall-cmd --permanent --add-port="${ACME_PORT:-80}/tcp"
 		firewall-cmd --reload
 	else
 		log "no supported firewall manager found; open UDP ${PORT} manually"
